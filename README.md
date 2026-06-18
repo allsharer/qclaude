@@ -49,13 +49,11 @@ Adjust the target directory (`~/bin`) to any directory already on your `$PATH`.
 oclaude
 ```
 
-Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate and `Enter` to launch. Active sessions (already running) are shown with an `[active]` label and cannot be selected — exit the running session first.
+Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `Enter` to launch, `q` to quit.
 
-On selection, Claude Code resumes in the project's directory. Your shell's working directory is unchanged after you exit.
-
-```bash
-ln -s "$PWD/oclaude" ~/bin/oclaude
-```
+- Active sessions are shown with an `[active]` label and cannot be selected — exit the running session first.
+- On selection, Claude Code resumes with that session's directory as the working directory.
+- Your shell's working directory is unchanged after you exit claude.
 
 ---
 
@@ -136,10 +134,6 @@ eclaude
 If a newer session exists in `~/.claude/projects/` for the entry's directory, it is shown as a suggested replacement — press `Enter` to accept it or type a different ID manually.
 
 Active sessions cannot be edited. A session ID already saved for another entry will be rejected.
-
-```bash
-ln -s "$PWD/eclaude" ~/bin/eclaude
-```
 
 ---
 
