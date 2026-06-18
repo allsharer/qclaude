@@ -1,4 +1,4 @@
-# qclaude
+# oclaude
 
 Shell scripts for saving and resuming [Claude Code](https://claude.ai/code) sessions by directory.
 
@@ -8,7 +8,7 @@ Claude Code sessions are ephemeral by default. These scripts let you save a sess
 
 | Script | Purpose |
 |--------|---------|
-| `qclaude` | Interactive picker — browse and launch any saved session |
+| `oclaude` | Interactive picker — browse and launch any saved session |
 | `sclaude` | Save a session for the current directory |
 | `rclaude` | Resume the saved session for the current directory |
 | `lclaude` | List all saved sessions |
@@ -19,7 +19,7 @@ Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per lin
 ## Quick start
 
 ```bash
-qclaude   # pick any saved session and jump straight in
+oclaude   # pick any saved session and jump straight in
 ```
 
 ## Installation
@@ -40,10 +40,10 @@ Adjust the target directory (`~/bin`) to any directory already on your `$PATH`.
 
 ## Usage
 
-### `qclaude` — Session picker
+### `oclaude` — Session picker
 
 ```bash
-qclaude
+oclaude
 ```
 
 Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate and `Enter` to launch. Active sessions (already running) are shown with an `[active]` label and cannot be selected — exit the running session first.
@@ -51,7 +51,7 @@ Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navig
 On selection, Claude Code resumes in the project's directory. Your shell's working directory is unchanged after you exit.
 
 ```bash
-ln -s "$PWD/qclaude" ~/bin/qclaude
+ln -s "$PWD/oclaude" ~/bin/oclaude
 ```
 
 ---
