@@ -34,6 +34,12 @@ if [[ -z "$SESSION_ID" ]]; then
 fi
 
 touch "$DB"
+
+if awk -F'|' -v sid="$SESSION_ID" '$2 == sid { found=1 } END { exit !found }' "$DB"; then
+    echo "Session $SESSION_ID is already saved — skipping." >&2
+    exit 0
+fi
+
 awk -F'|' -v dir="$DIR" -v sid="$SESSION_ID" '
     $1 == dir { print dir "|" sid; found=1; next }
     { print }
