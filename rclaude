@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Resume the saved Claude Code session for the current directory, or start a new one.
+# Usage: rclaude [extra claude args...]
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DB="${SCRIPT_DIR}/claude-sessions.db"
+DIR="$(pwd)"
+
+SESSION_ID=""
+if [[ -f "$DB" ]]; then
+    SESSION_ID=$(awk -F'|' -v dir="$DIR" '$1 == dir { print $2; exit }' "$DB")
+fi
+
+if [[ -n "$SESSION_ID" ]]; then
+    echo "Resuming session $SESSION_ID"
+    exec claude --resume "$SESSION_ID" "$@"
+else
+    echo "No saved session for $DIR — starting new session"
+    exec claude "$@"
+fi

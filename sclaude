@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Save the current directory's Claude Code session ID.
+# Usage: sclaude [session-id]
+#   With session-id: save it explicitly
+#   Without session-id: auto-detect the latest session for this directory
+
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DB="${SCRIPT_DIR}/claude-sessions.db"
+DIR="$(pwd)"
+
+encode_path() {
+    echo "$1" | tr '/.' '-'
+}
+
+find_latest_session() {
+    local encoded dir
+    encoded=$(encode_path "$1")
+    dir="$HOME/.claude/projects/$encoded"
+    [[ -d "$dir" ]] || return 0
+    ls -t "$dir"/*.jsonl 2>/dev/null | head -1 | sed 's|.*/||; s|\.jsonl$||'
+}
+
+SESSION_ID="${1:-}"
+
+if [[ -z "$SESSION_ID" ]]; then
+    SESSION_ID=$(find_latest_session "$DIR")
+    if [[ -z "$SESSION_ID" ]]; then
+        echo "No session found for $DIR — either pass a session ID or start a claude session first." >&2
+        exit 1
+    fi
+    echo "Auto-detected: $SESSION_ID"
+fi
+
+touch "$DB"
+awk -F'|' -v dir="$DIR" -v sid="$SESSION_ID" '
+    $1 == dir { print dir "|" sid; found=1; next }
+    { print }
+    END { if (!found) print dir "|" sid }
+' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+
+echo "Saved session $SESSION_ID for $DIR"

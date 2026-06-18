@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# List all saved Claude Code sessions.
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DB="${SCRIPT_DIR}/claude-sessions.db"
+DIR="$(pwd)"
+
+if [[ ! -f "$DB" ]] || [[ ! -s "$DB" ]]; then
+    echo "No saved sessions."
+    exit 0
+fi
+
+# Returns 0 if a claude process for this session ID is alive
+is_active() {
+    local sid="$1" f pid
+    for f in "$HOME/.claude/sessions/"*.json; do
+        [[ -f "$f" ]] || continue
+        grep -qF "\"sessionId\":\"$sid\"" "$f" 2>/dev/null || continue
+        pid=$(grep -o '"pid":[0-9]*' "$f" | grep -o '[0-9]*')
+        [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+printf "%-55s  %-36s  %s\n" "DIRECTORY" "SESSION ID" "STATUS"
+printf "%-55s  %-36s  %s\n" "---------" "----------" "------"
+
+while IFS='|' read -r path sid; do
+    [[ -z "$path" ]] && continue
+    if is_active "$sid"; then
+        status=$'\033[1;32mactive\033[0m'
+    elif [[ -n "$(find "$HOME/.claude/projects" -name "${sid}.jsonl" -maxdepth 2 2>/dev/null | head -1)" ]]; then
+        status="ok"
+    else
+        status="missing"
+    fi
+    [[ "$path" == "$DIR" ]] && status="$status *"
+    printf "%-55s  %-36s  %s\n" "$path" "$sid" "$status"
+done < "$DB"
+
+echo
+echo "  * = current directory"

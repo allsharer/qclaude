@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+# Delete a saved Claude Code session.
+# If pwd is in the database: direct delete with confirmation.
+# Otherwise: interactive picker.
+
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+DB="${SCRIPT_DIR}/claude-sessions.db"
+DIR="$(pwd)"
+
+if [[ ! -f "$DB" ]] || [[ ! -s "$DB" ]]; then
+    echo "No saved sessions." >&2
+    exit 1
+fi
+
+# Returns 0 if a claude process for this session ID is alive
+is_active() {
+    local sid="$1" f pid
+    for f in "$HOME/.claude/sessions/"*.json; do
+        [[ -f "$f" ]] || continue
+        grep -qF "\"sessionId\":\"$sid\"" "$f" 2>/dev/null || continue
+        pid=$(grep -o '"pid":[0-9]*' "$f" | grep -o '[0-9]*')
+        [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+# Find the project directory for a given path/session, falling back to a file search
+find_project_dir() {
+    local path="$1" sid="$2"
+    local encoded_dir="$HOME/.claude/projects/$(echo "$path" | tr '/.' '-')"
+    if [[ -d "$encoded_dir" ]]; then
+        echo "$encoded_dir"
+        return
+    fi
+    local found
+    found=$(find "$HOME/.claude/projects" -name "${sid}.jsonl" -maxdepth 2 2>/dev/null | head -1)
+    [[ -n "$found" ]] && dirname "$found"
+}
+
+do_delete() {
+    local path="$1" sid="$2"
+    local project_dir
+    project_dir=$(find_project_dir "$path" "$sid")
+
+    echo "Directory  : $path"
+    echo "Session ID : $sid"
+    if [[ -n "$project_dir" ]]; then
+        echo "Deleting   : $project_dir"
+    else
+        echo "Deleting   : (project dir not found — will remove DB entry only)"
+    fi
+    if is_active "$sid"; then
+        echo $'\033[1;31mError: session is currently active. Exit it before deleting.\033[0m'
+        return 1
+    fi
+    echo
+    read -r -p "Delete this session? [y/N] " CONFIRM
+    [[ ! "$CONFIRM" =~ ^[Yy]$ ]] && { echo "Aborted."; return; }
+
+    awk -F'|' -v p="$path" '$1 != p' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+    echo "Removed from database."
+
+    if [[ -n "$project_dir" ]]; then
+        rm -rf "$project_dir"
+        echo "Deleted $project_dir"
+    fi
+}
+
+# --- direct path: pwd is in the DB ---
+
+SESSION_ID=$(awk -F'|' -v dir="$DIR" '$1 == dir { print $2; exit }' "$DB")
+if [[ -n "$SESSION_ID" ]]; then
+    do_delete "$DIR" "$SESSION_ID"
+    exit 0
+fi
+
+# --- picker: pwd not in DB ---
+
+declare -a PATHS SIDS
+while IFS='|' read -r path sid; do
+    [[ -z "$path" ]] && continue
+    PATHS+=("$path")
+    SIDS+=("$sid")
+done < "$DB"
+
+if [[ ${#PATHS[@]} -eq 0 ]]; then
+    echo "No saved sessions." >&2
+    exit 1
+fi
+
+selected=0
+total=${#PATHS[@]}
+lines_drawn=0
+
+stty_saved=$(stty -g)
+cleanup() { tput cnorm 2>/dev/null; stty "$stty_saved"; }
+trap cleanup EXIT INT TERM
+tput civis 2>/dev/null
+
+draw() {
+    local redraw="${1:-}"
+    [[ "$redraw" == redraw ]] && printf "\033[%dA\033[J" "$lines_drawn"
+    lines_drawn=0
+
+    printf "Select a session to delete:\n";            ((lines_drawn++))
+    printf "\n";                                        ((lines_drawn++))
+    for ((i=0; i<total; i++)); do
+        local indicator=""
+        is_active "${SIDS[$i]}" && indicator=$' \033[1;32m[active]\033[0m'
+        if [[ $i -eq $selected ]]; then
+            printf "\033[1;33m>\033[0m %-52s  %s%s\n" "${PATHS[$i]}" "${SIDS[$i]}" "$indicator"
+        else
+            printf "  %-52s  %s%s\n" "${PATHS[$i]}" "${SIDS[$i]}" "$indicator"
+        fi
+        ((lines_drawn++))
+    done
+    printf "\n";                                        ((lines_drawn++))
+    printf "\033[2m  ↑/↓ move   Enter select   q quit\033[0m\n"; ((lines_drawn++))
+}
+
+draw
+
+while true; do
+    IFS= read -r -s -n1 key
+    if [[ $key == $'\x1b' ]]; then
+        IFS= read -r -s -n2 -t 0.05 seq
+        key+="$seq"
+    fi
+    case "$key" in
+        $'\x1b[A') ((selected > 0))          && { ((selected--)); draw redraw; } ;;
+        $'\x1b[B') ((selected < total - 1))  && { ((selected++)); draw redraw; } ;;
+        $'\n'|$'\r'|'') break ;;
+        q|Q|$'\x03') echo; echo "Aborted."; exit 0 ;;
+    esac
+done
+
+tput cnorm 2>/dev/null
+stty "$stty_saved"
+trap - EXIT INT TERM
+printf "\n\n"
+
+do_delete "${PATHS[$selected]}" "${SIDS[$selected]}"
