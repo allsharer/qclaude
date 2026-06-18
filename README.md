@@ -12,6 +12,7 @@ Claude Code sessions are ephemeral by default. These scripts let you save a sess
 | `sclaude` | Save a session for the current directory |
 | `rclaude` | Resume the saved session for the current directory |
 | `lclaude` | List all saved sessions |
+| `eclaude` | Edit/update the session ID for a saved entry |
 | `dclaude` | Delete a saved session |
 
 Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per line) alongside the scripts.
@@ -30,9 +31,11 @@ Clone the repo and symlink the scripts into a directory on your `$PATH`:
 git clone git@github.com:allsharer/qclaude.git ~/Dropbox/Bin/qclaude
 cd ~/Dropbox/Bin/qclaude
 
+ln -s "$PWD/oclaude" ~/bin/oclaude
 ln -s "$PWD/sclaude" ~/bin/sclaude
 ln -s "$PWD/rclaude" ~/bin/rclaude
 ln -s "$PWD/lclaude" ~/bin/lclaude
+ln -s "$PWD/eclaude" ~/bin/eclaude
 ln -s "$PWD/dclaude" ~/bin/dclaude
 ```
 
@@ -118,6 +121,25 @@ DIRECTORY                                                SESSION ID             
 | `active` | A Claude Code process for this session is currently running |
 | `ok` | Session file exists on disk, not currently active |
 | `missing` | Session file not found (deleted outside of `dclaude`) |
+
+---
+
+### `eclaude` — Edit a session ID
+
+```bash
+eclaude
+```
+
+- **If the current directory has a saved session** — shows the current session ID and prompts for a new one.
+- **If the current directory is not in the database** — opens an interactive picker to choose which entry to edit.
+
+If a newer session exists in `~/.claude/projects/` for the entry's directory, it is shown as a suggested replacement — press `Enter` to accept it or type a different ID manually.
+
+Active sessions cannot be edited. A session ID already saved for another entry will be rejected.
+
+```bash
+ln -s "$PWD/eclaude" ~/bin/eclaude
+```
 
 ---
 
