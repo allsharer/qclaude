@@ -48,8 +48,8 @@ tput civis 2>/dev/null
 draw() {
     local redraw="${1:-}"
     if [[ "$redraw" == redraw ]]; then
-        tput rc
-        tput ed
+        printf '\0338'   # restore cursor (VT100)
+        printf '\033[J'  # erase to end of screen
     fi
 
     printf "Select a session to resume:\n\n"
@@ -70,7 +70,7 @@ draw() {
     fi
 }
 
-tput sc
+printf '\0337'  # save cursor (VT100)
 draw
 
 while true; do
