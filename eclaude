@@ -125,6 +125,23 @@ edit_directory() {
         done
         echo "  Updated session cwd references"
     fi
+
+    # Update ~/.claude.json project registry (primary lookup used by claude --resume)
+    local registry="$HOME/.claude.json"
+    if [[ -f "$registry" ]]; then
+        python3 - "$registry" "$old_path" "$new_path" <<'PYEOF'
+import sys, json
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    data = json.load(f)
+projects = data.get("projects", {})
+if old in projects:
+    projects[new] = projects.pop(old)
+    with open(path, "w") as f:
+        json.dump(data, f, separators=(",", ":"))
+PYEOF
+        echo "  Updated ~/.claude.json registry"
+    fi
 }
 
 do_edit() {
