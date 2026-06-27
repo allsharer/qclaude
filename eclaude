@@ -150,7 +150,6 @@ fi
 
 selected=0
 total=${#PATHS[@]}
-lines_drawn=0
 
 stty_saved=$(stty -g)
 cleanup() { tput cnorm 2>/dev/null; stty "$stty_saved"; }
@@ -159,11 +158,12 @@ tput civis 2>/dev/null
 
 draw() {
     local redraw="${1:-}"
-    [[ "$redraw" == redraw ]] && printf "\033[%dA\033[J" "$lines_drawn"
-    lines_drawn=0
+    if [[ "$redraw" == redraw ]]; then
+        tput rc
+        tput ed
+    fi
 
-    printf "Select a session to edit:\n";                                      ((lines_drawn++))
-    printf "\n";                                                                ((lines_drawn++))
+    printf "Select a session to edit:\n\n"
     for ((i=0; i<total; i++)); do
         local indicator=""
         is_active "${SIDS[$i]}" && indicator=$' \033[1;32m[active]\033[0m'
@@ -172,12 +172,12 @@ draw() {
         else
             printf "  %-52s  %s%s\n" "${PATHS[$i]}" "${SIDS[$i]}" "$indicator"
         fi
-        ((lines_drawn++))
     done
-    printf "\n";                                                                ((lines_drawn++))
-    printf "\033[2m  ↑/↓ move   Enter select   q quit\033[0m\n";             ((lines_drawn++))
+    printf "\n"
+    printf "\033[2m  ↑/↓ move   Enter select   q quit\033[0m\n"
 }
 
+tput sc
 draw
 
 while true; do
