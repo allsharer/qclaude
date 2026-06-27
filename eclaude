@@ -25,6 +25,15 @@ is_active() {
 
 encode_path() { echo "$1" | tr '/.' '-'; }
 
+find_project_dir() {
+    local path="$1" sid="$2"
+    local encoded="$HOME/.claude/projects/$(encode_path "$path")"
+    if [[ -d "$encoded" ]]; then echo "$encoded"; return; fi
+    local found
+    found=$(find "$HOME/.claude/projects" -name "${sid}.jsonl" -maxdepth 2 2>/dev/null | head -1)
+    [[ -n "$found" ]] && dirname "$found"
+}
+
 find_latest_session() {
     local dir="$HOME/.claude/projects/$(encode_path "$1")"
     [[ -d "$dir" ]] || return 0
@@ -82,10 +91,10 @@ edit_directory() {
 
     # Rename the project directory if it exists
     local old_proj new_proj
-    old_proj="$HOME/.claude/projects/$(encode_path "$old_path")"
+    old_proj=$(find_project_dir "$old_path" "$sid")
     new_proj="$HOME/.claude/projects/$(encode_path "$new_path")"
 
-    if [[ -d "$old_proj" ]]; then
+    if [[ -n "$old_proj" ]]; then
         if [[ -d "$new_proj" ]]; then
             echo "  $new_proj already exists — aborted." >&2; return 1
         fi
