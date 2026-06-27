@@ -13,7 +13,7 @@ fi
 
 if [[ -n "$SESSION_ID" ]]; then
     echo "Resuming session $SESSION_ID"
-    exec claude --resume "$SESSION_ID" "$@"
+    exec claude --continue "$@"
 else
     echo "No saved session for $DIR — starting new session"
     exec claude "$@"
