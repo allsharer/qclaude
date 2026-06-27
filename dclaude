@@ -117,6 +117,7 @@ draw() {
     printf "\033[2m  ↑/↓ move   Enter select   q quit\033[0m\n"
 }
 
+clear
 tput sc
 draw
 

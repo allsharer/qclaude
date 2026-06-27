@@ -70,6 +70,7 @@ draw() {
     fi
 }
 
+clear
 printf '\0337'  # save cursor (VT100)
 draw
 
