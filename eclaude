@@ -107,8 +107,14 @@ edit_directory() {
     awk -F'|' -v old="$old_path" -v new="$new_path" -v sid="$sid" '
         $1 == old { print new "|" sid; next } { print }
     ' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+    echo "  Updated db: $old_path → $new_path"
 
-    echo "  Updated: $old_path → $new_path"
+    # Update history.jsonl so claude --resume can find the session
+    local history="$HOME/.claude/history.jsonl"
+    if [[ -f "$history" ]]; then
+        sed -i "s|\"project\":\"${old_path}\"|\"project\":\"${new_path}\"|g" "$history"
+        echo "  Updated history.jsonl"
+    fi
 }
 
 do_edit() {
