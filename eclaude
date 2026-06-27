@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Edit the session ID for a saved entry.
+# Edit a saved session entry — update the session ID and/or rename the directory.
 # If pwd is in the database: edit that entry directly.
 # Otherwise: interactive picker to choose which entry to edit.
 
@@ -23,58 +23,107 @@ is_active() {
     return 1
 }
 
+encode_path() { echo "$1" | tr '/.' '-'; }
+
 find_latest_session() {
-    local encoded dir
-    encoded=$(echo "$1" | tr '/.' '-')
-    dir="$HOME/.claude/projects/$encoded"
+    local dir="$HOME/.claude/projects/$(encode_path "$1")"
     [[ -d "$dir" ]] || return 0
     ls -t "$dir"/*.jsonl 2>/dev/null | head -1 | sed 's|.*/||; s|\.jsonl$||'
 }
 
-do_edit() {
+edit_session_id() {
     local path="$1" old_sid="$2"
+    local auto_sid new_sid
 
-    echo "Directory   : $path"
-    echo "Current ID  : $old_sid"
-    if is_active "$old_sid"; then
-        echo $'\033[1;31mError: session is currently active. Exit it before editing.\033[0m'
-        return 1
-    fi
-    echo
-
-    local auto_sid
     auto_sid=$(find_latest_session "$path")
     if [[ -n "$auto_sid" && "$auto_sid" != "$old_sid" ]]; then
-        printf "Auto-detect : %s\n" "$auto_sid"
-        printf "New ID (Enter to use auto-detected, or type a session ID): "
+        printf "  Auto-detect : %s\n" "$auto_sid"
+        printf "  New session ID (Enter to use auto-detected): "
     else
-        printf "New session ID: "
+        printf "  New session ID: "
     fi
 
     read -r new_sid
     new_sid="${new_sid:-$auto_sid}"
 
     if [[ -z "$new_sid" ]]; then
-        echo "No session ID provided — aborted." >&2
-        return 1
+        echo "No session ID provided — aborted." >&2; return 1
     fi
-
     if [[ "$new_sid" == "$old_sid" ]]; then
-        echo "Session ID unchanged — nothing to do."
-        return 0
+        echo "  Session ID unchanged."; return 0
     fi
-
     if awk -F'|' -v sid="$new_sid" '$2 == sid { found=1 } END { exit !found }' "$DB"; then
-        echo "Session $new_sid is already saved for another entry — aborted." >&2
-        return 1
+        echo "  Session $new_sid is already saved for another entry — aborted." >&2; return 1
     fi
 
-    awk -F'|' -v path="$path" -v sid="$new_sid" '
-        $1 == path { print path "|" sid; next }
-        { print }
+    awk -F'|' -v p="$path" -v sid="$new_sid" '
+        $1 == p { print p "|" sid; next } { print }
     ' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
 
-    echo "Updated: $old_sid → $new_sid"
+    echo "  Updated: $old_sid → $new_sid"
+}
+
+edit_directory() {
+    local old_path="$1" sid="$2"
+    local new_path
+
+    printf "  New directory path: "
+    read -r new_path
+
+    if [[ -z "$new_path" ]]; then
+        echo "  No path provided — aborted." >&2; return 1
+    fi
+    if [[ "$new_path" == "$old_path" ]]; then
+        echo "  Directory unchanged."; return 0
+    fi
+    if awk -F'|' -v p="$new_path" '$1 == p { found=1 } END { exit !found }' "$DB"; then
+        echo "  $new_path is already in the database — aborted." >&2; return 1
+    fi
+
+    # Rename the project directory if it exists
+    local old_proj new_proj
+    old_proj="$HOME/.claude/projects/$(encode_path "$old_path")"
+    new_proj="$HOME/.claude/projects/$(encode_path "$new_path")"
+
+    if [[ -d "$old_proj" ]]; then
+        if [[ -d "$new_proj" ]]; then
+            echo "  $new_proj already exists — aborted." >&2; return 1
+        fi
+        mv "$old_proj" "$new_proj"
+        echo "  Renamed: $old_proj → $new_proj"
+    else
+        echo "  (project dir not found on disk — updating DB entry only)"
+    fi
+
+    awk -F'|' -v old="$old_path" -v new="$new_path" -v sid="$sid" '
+        $1 == old { print new "|" sid; next } { print }
+    ' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+
+    echo "  Updated: $old_path → $new_path"
+}
+
+do_edit() {
+    local path="$1" sid="$2"
+
+    echo "Directory   : $path"
+    echo "Session ID  : $sid"
+    if is_active "$sid"; then
+        echo $'\033[1;31mError: session is currently active. Exit it before editing.\033[0m'
+        return 1
+    fi
+    echo
+    echo "  1) Edit session ID"
+    echo "  2) Rename directory"
+    echo "  q) Quit"
+    echo
+    read -r -p "Choice: " choice
+
+    case "$choice" in
+        1) edit_session_id "$path" "$sid" ;;
+        2) edit_directory  "$path" "$sid" ;;
+        q|Q) echo "Aborted." ;;
+        *) echo "Invalid choice — aborted." >&2; return 1 ;;
+    esac
 }
 
 # --- direct path: pwd is in the DB ---

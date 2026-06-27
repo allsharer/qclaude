@@ -128,12 +128,15 @@ DIRECTORY                                                SESSION ID             
 eclaude
 ```
 
-- **If the current directory has a saved session** — shows the current session ID and prompts for a new one.
+- **If the current directory has a saved session** — edits that entry directly.
 - **If the current directory is not in the database** — opens an interactive picker to choose which entry to edit.
 
-If a newer session exists in `~/.claude/projects/` for the entry's directory, it is shown as a suggested replacement — press `Enter` to accept it or type a different ID manually.
+After selecting an entry, choose what to update:
 
-Active sessions cannot be edited. A session ID already saved for another entry will be rejected.
+- **1) Edit session ID** — prompts for a new session ID. If a newer session exists in `~/.claude/projects/` for that directory it is offered as a suggestion; press `Enter` to accept or type a different ID.
+- **2) Rename directory** — prompts for a new directory path, then renames the `~/.claude/projects/` entry so all session history and memory are preserved under the new path.
+
+Active sessions cannot be edited. A session ID or directory already saved for another entry will be rejected.
 
 ---
 
