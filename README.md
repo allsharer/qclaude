@@ -12,7 +12,7 @@ Claude Code sessions are ephemeral by default. These scripts let you save a sess
 | `sclaude` | Save a session for the current directory |
 | `rclaude` | Resume the saved session for the current directory |
 | `lclaude` | List all saved sessions |
-| `eclaude` | Edit/update the session ID for a saved entry |
+| `eclaude` | Edit session ID or rename a directory (updates all Claude metadata) |
 | `dclaude` | Delete a saved session |
 
 Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per line) alongside the scripts.
@@ -84,7 +84,7 @@ rclaude [extra claude args...]
 
 Run this from a project directory to pick up where you left off.
 
-- If a session is saved for the current directory, runs `claude --resume <id>`.
+- If a session is saved for the current directory, runs `claude --continue`.
 - If no session is saved, starts a fresh `claude` session.
 - Any extra arguments are passed through to `claude`.
 
@@ -122,7 +122,7 @@ DIRECTORY                                                SESSION ID             
 
 ---
 
-### `eclaude` — Edit a session ID
+### `eclaude` — Edit a session
 
 ```bash
 eclaude
@@ -134,7 +134,7 @@ eclaude
 After selecting an entry, choose what to update:
 
 - **1) Edit session ID** — prompts for a new session ID. If a newer session exists in `~/.claude/projects/` for that directory it is offered as a suggestion; press `Enter` to accept or type a different ID.
-- **2) Rename directory** — prompts for a new directory path, then renames the `~/.claude/projects/` entry so all session history and memory are preserved under the new path.
+- **2) Rename directory** — prompts for a new directory path, then performs a complete rename in one step: renames the filesystem directory, renames the `~/.claude/projects/` entry, and updates all internal Claude Code metadata (`~/.claude.json`, `~/.claude/history.jsonl`, session `.jsonl` files) so the session resumes cleanly.
 
 Active sessions cannot be edited. A session ID or directory already saved for another entry will be rejected.
 
