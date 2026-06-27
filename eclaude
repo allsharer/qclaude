@@ -115,6 +115,16 @@ edit_directory() {
         sed -i "s|\"project\":\"${old_path}\"|\"project\":\"${new_path}\"|g" "$history"
         echo "  Updated history.jsonl"
     fi
+
+    # Update cwd references inside the session jsonl files
+    if [[ -n "$new_proj" && -d "$new_proj" ]]; then
+        local f
+        for f in "$new_proj"/*.jsonl; do
+            [[ -f "$f" ]] || continue
+            sed -i "s|\"cwd\":\"${old_path}\"|\"cwd\":\"${new_path}\"|g" "$f"
+        done
+        echo "  Updated session cwd references"
+    fi
 }
 
 do_edit() {
