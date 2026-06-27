@@ -109,6 +109,18 @@ edit_directory() {
     ' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
     echo "  Updated db: $old_path → $new_path"
 
+    # Rename the actual filesystem directory
+    if [[ -d "$old_path" ]]; then
+        if [[ -d "$new_path" ]]; then
+            echo "  Warning: $new_path already exists on disk — skipping filesystem rename"
+        else
+            mv "$old_path" "$new_path"
+            echo "  Renamed: $old_path → $new_path"
+        fi
+    else
+        echo "  (filesystem directory not found — skipping rename)"
+    fi
+
     # Update history.jsonl so claude --resume can find the session
     local history="$HOME/.claude/history.jsonl"
     if [[ -f "$history" ]]; then
