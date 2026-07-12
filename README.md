@@ -52,7 +52,7 @@ oclaude
 Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `Enter` to launch, `q` to quit.
 
 - Active sessions are shown with an `[active]` label and cannot be selected — exit the running session first.
-- On selection, Claude Code resumes with that session's directory as the working directory.
+- On selection, Claude Code resumes in `--mode acceptEdits` with that session's directory as the working directory.
 - Your shell's working directory is unchanged after you exit claude.
 
 ---
@@ -84,8 +84,8 @@ rclaude [extra claude args...]
 
 Run this from a project directory to pick up where you left off.
 
-- If a session is saved for the current directory, runs `claude --continue`.
-- If no session is saved, starts a fresh `claude` session.
+- If a session is saved for the current directory, runs `claude --continue --mode acceptEdits`.
+- If no session is saved, starts a fresh `claude --mode acceptEdits` session.
 - Any extra arguments are passed through to `claude`.
 
 ```bash
