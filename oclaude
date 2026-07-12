@@ -110,4 +110,4 @@ stty "$stty_saved"
 trap - EXIT INT TERM
 printf "\n"
 
-cd "${PATHS[$selected]}" && exec claude --continue
+cd "${PATHS[$selected]}" && exec claude --continue --mode acceptEdits
