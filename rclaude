@@ -13,8 +13,8 @@ fi
 
 if [[ -n "$SESSION_ID" ]]; then
     echo "Resuming session $SESSION_ID"
-    exec claude --continue --mode acceptEdits "$@"
+    exec claude --continue --permission-mode acceptEdits "$@"
 else
     echo "No saved session for $DIR — starting new session"
-    exec claude --mode acceptEdits "$@"
+    exec claude --permission-mode acceptEdits "$@"
 fi
