@@ -204,11 +204,22 @@ fi
 
 selected=0
 total=${#PATHS[@]}
+top=0
 
 stty_saved=$(stty -g)
 cleanup() { tput cnorm 2>/dev/null; stty "$stty_saved"; }
 trap cleanup EXIT INT TERM
 tput civis 2>/dev/null
+
+# Session rows that fit on screen, leaving room for the header (2 lines),
+# the two scroll indicators, and the footer (2 lines).
+page_size() {
+    local lines
+    lines=$(tput lines 2>/dev/null) || lines=24
+    local p=$((lines - 6))
+    ((p < 1)) && p=1
+    printf '%s' "$p"
+}
 
 draw() {
     local redraw="${1:-}"
@@ -217,8 +228,22 @@ draw() {
         tput ed
     fi
 
+    local page end
+    page=$(page_size)
+    ((selected < top)) && top=$selected
+    ((selected >= top + page)) && top=$((selected - page + 1))
+    ((top > total - page)) && top=$((total - page))
+    ((top < 0)) && top=0
+    end=$((top + page))
+    ((end > total)) && end=$total
+
     printf "Select a session to edit:\n\n"
-    for ((i=0; i<total; i++)); do
+    if ((top > 0)); then
+        printf "\033[2m  ↑ %d more above\033[0m\n" "$top"
+    else
+        printf "\n"
+    fi
+    for ((i=top; i<end; i++)); do
         local indicator=""
         is_active "${SIDS[$i]}" && indicator=$' \033[1;32m[active]\033[0m'
         if [[ $i -eq $selected ]]; then
@@ -227,8 +252,13 @@ draw() {
             printf "  %-52s  %s%s\n" "${PATHS[$i]}" "${SIDS[$i]}" "$indicator"
         fi
     done
+    if ((end < total)); then
+        printf "\033[2m  ↓ %d more below\033[0m\n" "$((total - end))"
+    else
+        printf "\n"
+    fi
     printf "\n"
-    printf "\033[2m  ↑/↓ move   Enter select   q quit\033[0m\n"
+    printf "\033[2m  ↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit\033[0m\n"
 }
 
 clear
@@ -240,10 +270,26 @@ while true; do
     if [[ $key == $'\x1b' ]]; then
         IFS= read -r -s -n2 -t 0.05 seq
         key+="$seq"
+        if [[ $seq == '['[0-9] ]]; then
+            IFS= read -r -s -n1 -t 0.05 seq2
+            key+="$seq2"
+        fi
     fi
     case "$key" in
         $'\x1b[A') ((selected > 0))         && { ((selected--)); draw redraw; } ;;
         $'\x1b[B') ((selected < total - 1)) && { ((selected++)); draw redraw; } ;;
+        $'\x1b[5~'|$'\x1b[6~'|$'\x1b[H'|$'\x1b[F'|$'\x1b[1~'|$'\x1b[4~')
+            page=$(page_size)
+            case "$key" in
+                $'\x1b[5~') ((selected -= page)) ;;
+                $'\x1b[6~') ((selected += page)) ;;
+                $'\x1b[H'|$'\x1b[1~') selected=0 ;;
+                $'\x1b[F'|$'\x1b[4~') selected=$((total - 1)) ;;
+            esac
+            ((selected < 0)) && selected=0
+            ((selected > total - 1)) && selected=$((total - 1))
+            draw redraw
+            ;;
         $'\n'|$'\r'|'') break ;;
         q|Q|$'\x03') echo; echo "Aborted."; exit 0 ;;
     esac

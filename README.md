@@ -49,7 +49,7 @@ Adjust the target directory (`~/bin`) to any directory already on your `$PATH`.
 oclaude
 ```
 
-Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `Enter` to launch, `q` to quit.
+Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `PgUp`/`PgDn` to page, `Home`/`End` to jump to the first/last entry, `Enter` to launch, `q` to quit. Long lists scroll within a viewport that follows the selection, with `↑ N more above` / `↓ N more below` markers.
 
 - Active sessions are shown with an `[active]` label and cannot be selected — exit the running session first.
 - On selection, Claude Code resumes in `--permission-mode acceptEdits` with that session's directory as the working directory.
@@ -147,7 +147,7 @@ dclaude
 ```
 
 - **If the current directory has a saved session** — shows the details and asks for confirmation before deleting.
-- **If the current directory is not in the database** — opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `Enter` to select, `q` to quit.
+- **If the current directory is not in the database** — opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `PgUp`/`PgDn` to page, `Home`/`End` to jump, `Enter` to select, `q` to quit. Long lists scroll within a viewport that follows the selection.
 
 Active sessions (currently running) cannot be deleted. Exit the Claude Code session first.
 
