@@ -24,6 +24,42 @@ is_active() {
     return 1
 }
 
+# Returns 0 if a session's jsonl file exists anywhere under ~/.claude/projects
+has_session_file() {
+    local sid="$1"
+    [[ -n "$(find "$HOME/.claude/projects" -name "${sid}.jsonl" -maxdepth 2 2>/dev/null | head -1)" ]]
+}
+
+clean_missing() {
+    declare -a paths sids
+    while IFS='|' read -r path sid; do
+        [[ -z "$path" ]] && continue
+        is_active "$sid" && continue
+        has_session_file "$sid" && continue
+        paths+=("$path")
+        sids+=("$sid")
+    done < "$DB"
+
+    if [[ ${#paths[@]} -eq 0 ]]; then
+        echo "No missing sessions to clean."
+        return 0
+    fi
+
+    echo "The following sessions are missing and will be removed from the database:"
+    echo
+    for i in "${!paths[@]}"; do
+        printf "  %-55s  %s\n" "${paths[$i]}" "${sids[$i]}"
+    done
+    echo
+    read -r -p "Remove ${#paths[@]} missing session(s) from the database? [y/N] " CONFIRM
+    [[ ! "$CONFIRM" =~ ^[Yy]$ ]] && { echo "Aborted."; return 0; }
+
+    for path in "${paths[@]}"; do
+        awk -F'|' -v p="$path" '$1 != p' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+    done
+    echo "Removed ${#paths[@]} entries from the database."
+}
+
 # Find the project directory for a given path/session, falling back to a file search
 find_project_dir() {
     local path="$1" sid="$2"
@@ -65,6 +101,11 @@ do_delete() {
         echo "Deleted $project_dir"
     fi
 }
+
+if [[ "$1" == "--clean" ]]; then
+    clean_missing
+    exit $?
+fi
 
 # --- direct path: pwd is in the DB ---
 

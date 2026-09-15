@@ -153,6 +153,12 @@ Active sessions (currently running) cannot be deleted. Exit the Claude Code sess
 
 On confirmation, `dclaude` removes the database entry **and** deletes the entire `~/.claude/projects/<dir>/` directory (session history, memory, everything).
 
+```bash
+dclaude --clean
+```
+
+Removes every database entry whose status is `missing` (see `lclaude`) in one pass. Lists the sessions to be removed, asks for a single confirmation, then rewrites the database — active and `ok` sessions are left untouched, and since there's no project directory to match a missing session, only the database entry is removed.
+
 ## How it works
 
 Claude Code stores session files under `~/.claude/projects/<encoded-path>/` where the directory path has `/` and `.` replaced with `-`. The `sclaude` auto-detect reads the most recent `.jsonl` file from that directory to find the latest session ID.
