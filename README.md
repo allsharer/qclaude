@@ -12,7 +12,7 @@ Claude Code sessions are ephemeral by default. These scripts let you save a sess
 | `sclaude` | Save a session for the current directory |
 | `rclaude` | Resume the saved session for the current directory |
 | `lclaude` | List all saved sessions |
-| `eclaude` | Edit session ID or rename a directory (updates all Claude metadata) |
+| `eclaude` | Edit session ID, or move/merge a directory (updates all Claude metadata) |
 | `dclaude` | Delete a saved session |
 
 Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per line) alongside the scripts.
@@ -134,9 +134,34 @@ eclaude
 After selecting an entry, choose what to update:
 
 - **1) Edit session ID** — prompts for a new session ID. If a newer session exists in `~/.claude/projects/` for that directory it is offered as a suggestion; press `Enter` to accept or type a different ID.
-- **2) Rename directory** — prompts for a new directory path, then performs a complete rename in one step: renames the filesystem directory, renames the `~/.claude/projects/` entry, and updates all internal Claude Code metadata (`~/.claude.json`, `~/.claude/history.jsonl`, session `.jsonl` files) so the session resumes cleanly.
+- **2) Move directory** — prompts for a new directory path, then moves everything there in one step (see `eclaude --move` below for exactly what moves).
 
-Active sessions cannot be edited. A session ID or directory already saved for another entry will be rejected.
+Active sessions cannot be edited. A session ID already saved for another entry will be rejected.
+
+---
+
+### `eclaude --move` — Move a directory non-interactively
+
+```bash
+eclaude --move <source-dir> <destination-dir>
+```
+
+Moves a directory and everything Claude Code knows about it, so `claude --resume` / `claude --continue` work correctly from the new location afterward:
+
+- the files themselves
+- the `~/.claude/projects/` session data (all `.jsonl` transcripts, not just the one `eclaude`/`sclaude` happen to have saved)
+- the `cwd` field recorded inside each moved session file
+- matching entries in `~/.claude/history.jsonl`
+- the project's entry in the `~/.claude.json` registry
+- its row in `claude-sessions.db`, if any
+
+Works whether or not `<source-dir>` is currently saved in the database — it only needs to exist on disk and/or have Claude session data under `~/.claude/projects/`.
+
+**If `<destination-dir>` already exists**, its contents are merged into rather than overwritten: files are moved in one by one. If any name would actually collide (same filename in both directories, or the destination is already a separately-tracked Claude project with its own session data), nothing is changed and an error explains what conflicts — safe to re-run after resolving it. When the destination is already a separately-tracked project with no filename conflicts, both sides' session history end up living together under the destination (multiple `.jsonl` transcripts, all resumable), and the destination's existing `claude-sessions.db`/`~/.claude.json` entries are kept while the source's are discarded (since a path can only have one entry).
+
+```bash
+eclaude --move ~/work/old-project-name ~/work/new-project-name
+```
 
 ---
 

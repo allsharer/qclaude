@@ -1,16 +1,29 @@
 #!/usr/bin/env bash
-# Edit a saved session entry — update the session ID and/or rename the directory.
-# If pwd is in the database: edit that entry directly.
-# Otherwise: interactive picker to choose which entry to edit.
+# Edit a saved session entry, or move a directory (files + all Claude session
+# history/metadata) from one location to another.
+#
+# Usage:
+#   eclaude                     If pwd is in the database: edit that entry.
+#                                Otherwise: interactive picker to choose one.
+#   eclaude --move <src> <dst>  Move <src> to <dst> non-interactively: moves
+#                                the files, ~/.claude/projects/ session data,
+#                                history.jsonl entries, session cwd fields,
+#                                the ~/.claude.json registry entry, and the
+#                                claude-sessions.db row (if any) — whether or
+#                                not <src> is currently saved in the database.
+#                                If <dst> already exists, its contents are
+#                                merged rather than overwritten (fails only on
+#                                an actual name collision, leaving everything
+#                                untouched).
+#   eclaude --help              Show this help.
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 DB="${SCRIPT_DIR}/claude-sessions.db"
 DIR="$(pwd)"
 
-if [[ ! -f "$DB" ]] || [[ ! -s "$DB" ]]; then
-    echo "No saved sessions." >&2
-    exit 1
-fi
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 is_active() {
     local sid="$1" f pid
@@ -23,12 +36,16 @@ is_active() {
     return 1
 }
 
-encode_path() { echo "$1" | tr '/.' '-'; }
+encode_path() { printf '%s' "$1" | tr '/.' '-'; }
 
+# Locate a directory's project dir, falling back to a search by session ID
+# for cases where the project dir doesn't match the path's current encoding
+# (e.g. it was renamed outside of eclaude).
 find_project_dir() {
     local path="$1" sid="$2"
     local encoded="$HOME/.claude/projects/$(encode_path "$path")"
     if [[ -d "$encoded" ]]; then echo "$encoded"; return; fi
+    [[ -n "$sid" ]] || return 0
     local found
     found=$(find "$HOME/.claude/projects" -name "${sid}.jsonl" -maxdepth 2 2>/dev/null | head -1)
     [[ -n "$found" ]] && dirname "$found"
@@ -39,6 +56,236 @@ find_latest_session() {
     [[ -d "$dir" ]] || return 0
     ls -t "$dir"/*.jsonl 2>/dev/null | head -1 | sed 's|.*/||; s|\.jsonl$||'
 }
+
+# Replace a top-level JSON string field's value across one or more files —
+# a plain literal substitution (via Python's json.dumps for exact escaping),
+# not a regex, so paths containing '.', '*', '\', etc. are handled safely.
+# Prints the number of files actually modified (files where the field wasn't
+# found are left untouched and don't count).
+# patch_json_field FIELD OLD NEW FILE...
+patch_json_field() {
+    local field="$1" old="$2" new="$3"; shift 3
+    [[ $# -gt 0 ]] || { echo 0; return 0; }
+    python3 - "$field" "$old" "$new" "$@" <<'PYEOF'
+import sys, json
+field, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+old_tok = '"%s":%s' % (field, json.dumps(old))
+new_tok = '"%s":%s' % (field, json.dumps(new))
+changed = 0
+for path in sys.argv[4:]:
+    with open(path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    if old_tok in text:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text.replace(old_tok, new_tok))
+        changed += 1
+print(changed)
+PYEOF
+}
+
+# List (one per line) the basenames that exist in both $1 and $2 — i.e. what
+# would collide if $1's contents were merged into $2. Prints nothing if $1
+# doesn't exist, $2 doesn't exist, or there's no overlap. Prints the sentinel
+# __NOT_A_DIR__ if $2 exists but isn't a directory (can't merge into it).
+merge_collisions() {
+    local src="$1" dst="$2"
+    [[ -d "$src" ]] || return 0
+    if [[ -e "$dst" && ! -d "$dst" ]]; then
+        echo "__NOT_A_DIR__"
+        return 0
+    fi
+    [[ -d "$dst" ]] || return 0
+    local entry name
+    shopt -s dotglob nullglob
+    for entry in "$src"/*; do
+        name="$(basename "$entry")"
+        [[ -e "$dst/$name" ]] && echo "$name"
+    done
+    shopt -u dotglob nullglob
+}
+
+# Move every entry of $1 into $2. If $2 doesn't exist yet, this is a plain
+# rename. If it does, entries are merged into it one by one (caller must have
+# already confirmed via merge_collisions that nothing will collide). $1 is
+# removed afterward if left empty.
+do_merge_move() {
+    local src="$1" dst="$2"
+    [[ -d "$src" ]] || return 0
+    if [[ ! -e "$dst" ]]; then
+        mkdir -p "$(dirname "$dst")"
+        mv "$src" "$dst"
+        return 0
+    fi
+    local entry
+    shopt -s dotglob nullglob
+    for entry in "$src"/*; do
+        mv "$entry" "$dst/"
+    done
+    shopt -u dotglob nullglob
+    rmdir "$src" 2>/dev/null || true
+}
+
+# Rename (or merge) an entry in the ~/.claude.json "projects" registry.
+# Prints one of: absent | renamed | kept-destination
+update_registry() {
+    local old="$1" new="$2" registry="$HOME/.claude.json"
+    [[ -f "$registry" ]] || { echo absent; return; }
+    python3 - "$registry" "$old" "$new" <<'PYEOF'
+import sys, json
+path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f:
+    data = json.load(f)
+projects = data.get("projects", {})
+if old not in projects:
+    print("absent")
+    sys.exit(0)
+if new in projects:
+    projects.pop(old)
+    print("kept-destination")
+else:
+    projects[new] = projects.pop(old)
+    print("renamed")
+with open(path, "w") as f:
+    json.dump(data, f, separators=(",", ":"))
+PYEOF
+}
+
+# Rename (or merge) a claude-sessions.db row. Prints one of:
+# absent | renamed | kept-destination
+update_db_entry() {
+    local old="$1" new="$2"
+    [[ -f "$DB" ]] || { echo absent; return; }
+    local old_row new_row
+    old_row=$(awk -F'|' -v p="$old" '$1 == p { print; exit }' "$DB")
+    [[ -z "$old_row" ]] && { echo absent; return; }
+    new_row=$(awk -F'|' -v p="$new" '$1 == p { print; exit }' "$DB")
+    if [[ -n "$new_row" ]]; then
+        awk -F'|' -v p="$old" '$1 != p' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+        echo kept-destination
+        return
+    fi
+    awk -F'|' -v old="$old" -v new="$new" '
+        $1 == old { print new "|" $2; next } { print }
+    ' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
+    echo renamed
+}
+
+# Move everything associated with a directory from OLD_PATH to NEW_PATH:
+# the files themselves, Claude's session/project data, history.jsonl entries,
+# the cwd recorded inside moved session files, the ~/.claude.json registry
+# entry, and the claude-sessions.db row — merging into NEW_PATH if it already
+# has any of the above rather than overwriting. SID_HINT is optional and only
+# used to help locate a mismatched project dir (see find_project_dir).
+#
+# Validates every merge up front and makes no changes at all if anything
+# would collide.
+move_project() {
+    local old_path new_path sid_hint="${3:-}"
+    old_path="$(readlink -f -- "$1")"
+    new_path="$(readlink -f -- "$2")"
+    old_path="${old_path%/}"; [[ -z "$old_path" ]] && old_path="/"
+    new_path="${new_path%/}"; [[ -z "$new_path" ]] && new_path="/"
+
+    if [[ "$old_path" == "$new_path" ]]; then
+        echo "  Source and destination are the same — nothing to do." >&2
+        return 1
+    fi
+
+    echo "Moving:"
+    echo "  from: $old_path"
+    echo "  to  : $new_path"
+    echo
+
+    local old_proj new_proj
+    old_proj="$(find_project_dir "$old_path" "$sid_hint")"
+    [[ -z "$old_proj" ]] && old_proj="$HOME/.claude/projects/$(encode_path "$old_path")"
+    new_proj="$HOME/.claude/projects/$(encode_path "$new_path")"
+
+    # --- validate both merges up front; change nothing if either would collide ---
+    local -a proj_collisions=() fs_collisions=() line
+    while IFS= read -r line; do [[ -n "$line" ]] && proj_collisions+=("$line"); done \
+        < <(merge_collisions "$old_proj" "$new_proj")
+    while IFS= read -r line; do [[ -n "$line" ]] && fs_collisions+=("$line"); done \
+        < <(merge_collisions "$old_path" "$new_path")
+
+    if (( ${#proj_collisions[@]} > 0 || ${#fs_collisions[@]} > 0 )); then
+        echo "  Error: destination already contains conflicting items — aborted, nothing changed." >&2
+        if (( ${#proj_collisions[@]} > 0 )); then
+            if [[ "${proj_collisions[0]}" == "__NOT_A_DIR__" ]]; then
+                echo "    $new_proj exists and is not a directory" >&2
+            else
+                printf '    Claude session data conflicts: %s\n' "${proj_collisions[*]}" >&2
+            fi
+        fi
+        if (( ${#fs_collisions[@]} > 0 )); then
+            if [[ "${fs_collisions[0]}" == "__NOT_A_DIR__" ]]; then
+                echo "    $new_path exists and is not a directory" >&2
+            else
+                printf '    File conflicts: %s\n' "${fs_collisions[*]}" >&2
+            fi
+        fi
+        return 1
+    fi
+
+    # --- 1. Claude's own session/project directory ---
+    if [[ -d "$old_proj" ]]; then
+        local -a moved_jsonl=() f
+        for f in "$old_proj"/*.jsonl; do
+            [[ -f "$f" ]] && moved_jsonl+=("$(basename "$f")")
+        done
+        do_merge_move "$old_proj" "$new_proj"
+        echo "  Moved Claude session data: $old_proj -> $new_proj"
+        if (( ${#moved_jsonl[@]} > 0 )); then
+            local -a patch_files=()
+            for f in "${moved_jsonl[@]}"; do
+                [[ -f "$new_proj/$f" ]] && patch_files+=("$new_proj/$f")
+            done
+            local n_patched
+            n_patched=$(patch_json_field cwd "$old_path" "$new_path" "${patch_files[@]}")
+            (( n_patched > 0 )) && echo "  Updated cwd in $n_patched session file(s)"
+        fi
+    else
+        echo "  (no Claude session data found for this directory)"
+    fi
+
+    # --- 2. history.jsonl ---
+    local history="$HOME/.claude/history.jsonl"
+    if [[ -f "$history" ]]; then
+        local n_history
+        n_history=$(patch_json_field project "$old_path" "$new_path" "$history")
+        (( n_history > 0 )) && echo "  Updated history.jsonl"
+    fi
+
+    # --- 3. ~/.claude.json registry ---
+    case "$(update_registry "$old_path" "$new_path")" in
+        renamed) echo "  Updated ~/.claude.json registry" ;;
+        kept-destination)
+            echo "  ~/.claude.json already had an entry for $new_path — kept it, discarded the one for $old_path" ;;
+    esac
+
+    # --- 4. claude-sessions.db ---
+    case "$(update_db_entry "$old_path" "$new_path")" in
+        renamed) echo "  Updated claude-sessions.db entry" ;;
+        kept-destination)
+            echo "  claude-sessions.db already tracked $new_path separately — kept it, dropped the entry for $old_path" ;;
+    esac
+
+    # --- 5. the actual files ---
+    if [[ -d "$old_path" ]]; then
+        do_merge_move "$old_path" "$new_path"
+        echo "  Moved files: $old_path -> $new_path"
+    else
+        echo "  (source directory not found on disk — skipping file move)"
+    fi
+
+    echo
+    echo "Done. \"claude --resume\" / \"claude --continue\" from $new_path will pick this up."
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Interactive edit menu
+# ---------------------------------------------------------------------------
 
 edit_session_id() {
     local path="$1" old_sid="$2"
@@ -73,87 +320,14 @@ edit_session_id() {
 }
 
 edit_directory() {
-    local old_path="$1" sid="$2"
-    local new_path
-
+    local old_path="$1" sid="$2" new_path
     printf "  New directory path: "
     read -r new_path
 
     if [[ -z "$new_path" ]]; then
         echo "  No path provided — aborted." >&2; return 1
     fi
-    if [[ "$new_path" == "$old_path" ]]; then
-        echo "  Directory unchanged."; return 0
-    fi
-    if awk -F'|' -v p="$new_path" '$1 == p { found=1 } END { exit !found }' "$DB"; then
-        echo "  $new_path is already in the database — aborted." >&2; return 1
-    fi
-
-    # Rename the project directory if it exists
-    local old_proj new_proj
-    old_proj=$(find_project_dir "$old_path" "$sid")
-    new_proj="$HOME/.claude/projects/$(encode_path "$new_path")"
-
-    if [[ -n "$old_proj" ]]; then
-        if [[ -d "$new_proj" ]]; then
-            echo "  $new_proj already exists — aborted." >&2; return 1
-        fi
-        mv "$old_proj" "$new_proj"
-        echo "  Renamed: $old_proj → $new_proj"
-    else
-        echo "  (project dir not found on disk — updating DB entry only)"
-    fi
-
-    awk -F'|' -v old="$old_path" -v new="$new_path" -v sid="$sid" '
-        $1 == old { print new "|" sid; next } { print }
-    ' "$DB" > "${DB}.tmp" && mv "${DB}.tmp" "$DB"
-    echo "  Updated db: $old_path → $new_path"
-
-    # Rename the actual filesystem directory
-    if [[ -d "$old_path" ]]; then
-        if [[ -d "$new_path" ]]; then
-            echo "  Warning: $new_path already exists on disk — skipping filesystem rename"
-        else
-            mv "$old_path" "$new_path"
-            echo "  Renamed: $old_path → $new_path"
-        fi
-    else
-        echo "  (filesystem directory not found — skipping rename)"
-    fi
-
-    # Update history.jsonl so claude --resume can find the session
-    local history="$HOME/.claude/history.jsonl"
-    if [[ -f "$history" ]]; then
-        sed -i "s|\"project\":\"${old_path}\"|\"project\":\"${new_path}\"|g" "$history"
-        echo "  Updated history.jsonl"
-    fi
-
-    # Update cwd references inside the session jsonl files
-    if [[ -n "$new_proj" && -d "$new_proj" ]]; then
-        local f
-        for f in "$new_proj"/*.jsonl; do
-            [[ -f "$f" ]] || continue
-            sed -i "s|\"cwd\":\"${old_path}\"|\"cwd\":\"${new_path}\"|g" "$f"
-        done
-        echo "  Updated session cwd references"
-    fi
-
-    # Update ~/.claude.json project registry (primary lookup used by claude --resume)
-    local registry="$HOME/.claude.json"
-    if [[ -f "$registry" ]]; then
-        python3 - "$registry" "$old_path" "$new_path" <<'PYEOF'
-import sys, json
-path, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(path) as f:
-    data = json.load(f)
-projects = data.get("projects", {})
-if old in projects:
-    projects[new] = projects.pop(old)
-    with open(path, "w") as f:
-        json.dump(data, f, separators=(",", ":"))
-PYEOF
-        echo "  Updated ~/.claude.json registry"
-    fi
+    move_project "$old_path" "$new_path" "$sid"
 }
 
 do_edit() {
@@ -167,7 +341,7 @@ do_edit() {
     fi
     echo
     echo "  1) Edit session ID"
-    echo "  2) Rename directory"
+    echo "  2) Move directory"
     echo "  q) Quit"
     echo
     read -r -p "Choice: " choice
@@ -179,6 +353,31 @@ do_edit() {
         *) echo "Invalid choice — aborted." >&2; return 1 ;;
     esac
 }
+
+# ---------------------------------------------------------------------------
+# Non-interactive CLI dispatch (must come after all function definitions —
+# bash resolves functions top-to-bottom as it executes)
+# ---------------------------------------------------------------------------
+
+case "${1:-}" in
+    --move)
+        if [[ $# -ne 3 ]]; then
+            echo "Usage: eclaude --move <source-dir> <destination-dir>" >&2
+            exit 1
+        fi
+        move_project "$2" "$3"
+        exit $?
+        ;;
+    -h|--help)
+        sed -n '2,18p' "$(readlink -f "${BASH_SOURCE[0]}")" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+esac
+
+if [[ ! -f "$DB" ]] || [[ ! -s "$DB" ]]; then
+    echo "No saved sessions." >&2
+    exit 1
+fi
 
 # --- direct path: pwd is in the DB ---
 
