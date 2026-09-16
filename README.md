@@ -79,18 +79,21 @@ sclaude 248f0e73-e6ea-4311-...    # save a specific session ID
 ### `rclaude` — Resume a session
 
 ```bash
-rclaude [extra claude args...]
+rclaude [-r|-c] [extra claude args...]
 ```
 
 Run this from a project directory to pick up where you left off.
 
-- If a session is saved for the current directory, runs `claude --continue --permission-mode acceptEdits`.
-- If no session is saved, starts a fresh `claude --permission-mode acceptEdits` session.
+- **No flag** — if a session is saved for the current directory, runs `claude --continue --permission-mode acceptEdits`. If no session is saved, starts a fresh `claude --permission-mode acceptEdits` session.
+- **`-r`** — forces `claude --resume <session-id> --permission-mode acceptEdits` using the saved session ID. If no session is saved for the current directory, runs plain `claude --resume --permission-mode acceptEdits` so Claude's own picker is shown.
+- **`-c`** — forces `claude --continue --permission-mode acceptEdits`, regardless of what is or isn't saved in `claude-sessions.db`.
 - Any extra arguments are passed through to `claude`.
 
 ```bash
 cd ~/myproject
 rclaude
+rclaude -r
+rclaude -c
 rclaude --model claude-opus-4-5
 ```
 
