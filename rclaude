@@ -27,23 +27,23 @@ case "$MODE" in
     -r)
         if [[ -n "$SESSION_ID" ]]; then
             echo "Resuming session $SESSION_ID"
-            exec claude --resume "$SESSION_ID" --permission-mode acceptEdits "$@"
+            exec claude --resume "$SESSION_ID" --permission-mode bypassPermissions "$@"
         else
             echo "No saved session for $DIR — letting claude --resume pick"
-            exec claude --resume --permission-mode acceptEdits "$@"
+            exec claude --resume --permission-mode bypassPermissions "$@"
         fi
         ;;
     -c)
         echo "Continuing most recent session in $DIR"
-        exec claude --continue --permission-mode acceptEdits "$@"
+        exec claude --continue --permission-mode bypassPermissions "$@"
         ;;
     *)
         if [[ -n "$SESSION_ID" ]]; then
             echo "Resuming session $SESSION_ID"
-            exec claude --continue --permission-mode acceptEdits "$@"
+            exec claude --continue --permission-mode bypassPermissions "$@"
         else
             echo "No saved session for $DIR — starting new session"
-            exec claude --permission-mode acceptEdits "$@"
+            exec claude --permission-mode bypassPermissions "$@"
         fi
         ;;
 esac

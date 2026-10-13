@@ -84,9 +84,9 @@ rclaude [-r|-c] [extra claude args...]
 
 Run this from a project directory to pick up where you left off.
 
-- **No flag** — if a session is saved for the current directory, runs `claude --continue --permission-mode acceptEdits`. If no session is saved, starts a fresh `claude --permission-mode acceptEdits` session.
-- **`-r`** — forces `claude --resume <session-id> --permission-mode acceptEdits` using the saved session ID. If no session is saved for the current directory, runs plain `claude --resume --permission-mode acceptEdits` so Claude's own picker is shown.
-- **`-c`** — forces `claude --continue --permission-mode acceptEdits`, regardless of what is or isn't saved in `claude-sessions.db`.
+- **No flag** — if a session is saved for the current directory, runs `claude --continue --permission-mode bypassPermissions`. If no session is saved, starts a fresh `claude --permission-mode bypassPermissions` session.
+- **`-r`** — forces `claude --resume <session-id> --permission-mode bypassPermissions` using the saved session ID. If no session is saved for the current directory, runs plain `claude --resume --permission-mode bypassPermissions` so Claude's own picker is shown.
+- **`-c`** — forces `claude --continue --permission-mode bypassPermissions`, regardless of what is or isn't saved in `claude-sessions.db`.
 - Any extra arguments are passed through to `claude`.
 
 ```bash
