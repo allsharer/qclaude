@@ -1,0 +1,787 @@
+#!/usr/bin/env python3
+"""qclaude — save, resume, list, edit, and delete Claude Code CLI sessions by
+working directory, from one tool.
+
+Usage: qclaude [command] [args...]
+
+Commands (flag or word form; bare "qclaude" resumes, same as "qclaude -r"):
+  -r, resume [--resume|--continue] [claude-args...]
+                                         Resume the saved session for $PWD
+  -s, save [session-id]                 Save the current directory's session
+  -l, list                              List all saved sessions
+  -o, open                              Interactive picker to resume any session
+  -e, edit [--move <src> <dst>]         Edit a session entry, or move a directory
+  -d, delete [--clean]                  Delete a session, or bulk-remove missing ones
+  -h, --help                            Show this help
+
+This is a single-file replacement for the original six standalone scripts
+(oclaude, sclaude, rclaude, lclaude, eclaude, dclaude), which remain in this
+repo unchanged. See README.md for full documentation of each command.
+"""
+
+import json
+import os
+import select
+import shutil
+import sys
+import termios
+import tty
+from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DB_PATH = SCRIPT_DIR / "claude-sessions.db"
+CLAUDE_HOME = Path.home() / ".claude"
+
+NOT_A_DIR = "__NOT_A_DIR__"
+
+
+# ---------------------------------------------------------------------------
+# Session database (claude-sessions.db: one "path|session-id" line per entry)
+# ---------------------------------------------------------------------------
+
+def load_db():
+    if not DB_PATH.is_file():
+        return []
+    entries = []
+    for line in DB_PATH.read_text().splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("|", 1)
+        path = parts[0]
+        sid = parts[1] if len(parts) > 1 else ""
+        entries.append((path, sid))
+    return entries
+
+
+def write_db(entries):
+    tmp = DB_PATH.with_name(DB_PATH.name + ".tmp")
+    tmp.write_text("".join(f"{path}|{sid}\n" for path, sid in entries))
+    tmp.replace(DB_PATH)
+
+
+def find_entry(entries, path):
+    for p, sid in entries:
+        if p == path:
+            return sid
+    return None
+
+
+def sid_exists(entries, sid):
+    return any(s == sid for _, s in entries)
+
+
+# ---------------------------------------------------------------------------
+# Claude Code on-disk layout helpers
+# ---------------------------------------------------------------------------
+
+def encode_path(path):
+    return path.replace("/", "-").replace(".", "-")
+
+
+def project_dir_for(path):
+    return CLAUDE_HOME / "projects" / encode_path(path)
+
+
+def is_active(sid):
+    """A claude process for this session ID is currently running."""
+    sessions_dir = CLAUDE_HOME / "sessions"
+    if not sessions_dir.is_dir():
+        return False
+    for f in sessions_dir.glob("*.json"):
+        try:
+            data = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if data.get("sessionId") != sid:
+            continue
+        pid = data.get("pid")
+        if not isinstance(pid, int):
+            continue
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError, ValueError):
+            continue
+    return False
+
+
+def has_session_file(sid):
+    projects = CLAUDE_HOME / "projects"
+    if not projects.is_dir():
+        return False
+    return next(projects.glob(f"*/{sid}.jsonl"), None) is not None
+
+
+def find_project_dir(path, sid=None):
+    """Locate the project dir by encoded path, falling back to a search by
+    session ID for cases where the project dir doesn't match the path's
+    current encoding (e.g. it was renamed outside of `qclaude edit`)."""
+    enc = project_dir_for(path)
+    if enc.is_dir():
+        return enc
+    if not sid:
+        return None
+    projects = CLAUDE_HOME / "projects"
+    if not projects.is_dir():
+        return None
+    found = next(projects.glob(f"*/{sid}.jsonl"), None)
+    return found.parent if found else None
+
+
+def find_latest_session(path):
+    d = project_dir_for(path)
+    if not d.is_dir():
+        return None
+    jsonl = list(d.glob("*.jsonl"))
+    if not jsonl:
+        return None
+    return max(jsonl, key=lambda p: p.stat().st_mtime).stem
+
+
+# ---------------------------------------------------------------------------
+# Interactive picker (shared by `open`, `delete`, `edit`)
+# ---------------------------------------------------------------------------
+
+ARROW_UP, ARROW_DOWN = b"\x1b[A", b"\x1b[B"
+PAGE_UP, PAGE_DOWN = b"\x1b[5~", b"\x1b[6~"
+HOME_KEYS = (b"\x1b[H", b"\x1b[1~")
+END_KEYS = (b"\x1b[F", b"\x1b[4~")
+ENTER_KEYS = (b"\r", b"\n")
+QUIT_KEYS = (b"q", b"Q", b"\x03")
+
+
+def read_key(fd):
+    """Read one logical keypress, resolving the escape sequences used for
+    arrows, PgUp/PgDn, and Home/End (a short lookahead distinguishes a bare
+    Esc from the start of a longer sequence, mirroring `read -t 0.05`)."""
+    seq = os.read(fd, 1)
+    if seq != b"\x1b":
+        return seq
+    if select.select([fd], [], [], 0.05)[0]:
+        seq += os.read(fd, 1)
+    if seq[1:2] == b"[" and select.select([fd], [], [], 0.05)[0]:
+        nxt = os.read(fd, 1)
+        seq += nxt
+        if nxt.isdigit() and select.select([fd], [], [], 0.05)[0]:
+            seq += os.read(fd, 1)
+    return seq
+
+
+def run_picker(prompt, entries, blocked_msg=None):
+    """Interactive list picker over (path, sid) entries. Returns the selected
+    (path, sid), or None if the user quit. `blocked_msg(path, sid)` may
+    return a message to show instead of allowing that entry to be selected
+    (e.g. a currently-active session)."""
+    if not entries:
+        return None
+
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    selected = 0
+    top = 0
+    total = len(entries)
+    msg = ""
+
+    def page_size():
+        return max(1, shutil.get_terminal_size(fallback=(80, 24)).lines - 6)
+
+    def draw(redraw=False):
+        nonlocal top
+        page = page_size()
+        if selected < top:
+            top = selected
+        if selected >= top + page:
+            top = selected - page + 1
+        if top > total - page:
+            top = total - page
+        if top < 0:
+            top = 0
+        end = min(top + page, total)
+
+        out = []
+        if redraw:
+            out.append("\0338\033[J")  # restore cursor, erase to end of screen
+        out.append(f"{prompt}\n\n")
+        out.append(f"\033[2m  ↑ {top} more above\033[0m\n" if top > 0 else "\n")
+        for i in range(top, end):
+            path, sid = entries[i]
+            tag = "  \033[1;32m[active]\033[0m" if is_active(sid) else ""
+            marker = "\033[1;33m>\033[0m" if i == selected else " "
+            out.append(f"{marker} {path:<52}  {sid}{tag}\n")
+        out.append(f"\033[2m  ↓ {total - end} more below\033[0m\n" if end < total else "\n")
+        out.append("\n")
+        if msg:
+            out.append(f"\033[1;31m  {msg}\033[0m\n")
+        else:
+            out.append("\033[2m  ↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit\033[0m\n")
+        sys.stdout.write("".join(out))
+        sys.stdout.flush()
+
+    try:
+        tty.setraw(fd)
+        sys.stdout.write("\033[2J\033[H\033[?25l")
+        sys.stdout.write("\0337")  # save cursor
+        draw()
+        while True:
+            key = read_key(fd)
+            if key == ARROW_UP:
+                if selected > 0:
+                    selected -= 1
+                    msg = ""
+                    draw(True)
+            elif key == ARROW_DOWN:
+                if selected < total - 1:
+                    selected += 1
+                    msg = ""
+                    draw(True)
+            elif key in (PAGE_UP, PAGE_DOWN) + HOME_KEYS + END_KEYS:
+                page = page_size()
+                if key == PAGE_UP:
+                    selected -= page
+                elif key == PAGE_DOWN:
+                    selected += page
+                elif key in HOME_KEYS:
+                    selected = 0
+                elif key in END_KEYS:
+                    selected = total - 1
+                selected = max(0, min(total - 1, selected))
+                msg = ""
+                draw(True)
+            elif key in ENTER_KEYS:
+                path, sid = entries[selected]
+                reason = blocked_msg(path, sid) if blocked_msg else None
+                if reason:
+                    msg = reason
+                    draw(True)
+                else:
+                    return entries[selected]
+            elif key in QUIT_KEYS:
+                return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write("\033[?25h\n")
+        sys.stdout.flush()
+
+
+# ---------------------------------------------------------------------------
+# Directory move/merge (the core of `edit --move`)
+# ---------------------------------------------------------------------------
+
+def merge_collisions(src: Path, dst: Path):
+    """Basenames that exist in both src and dst — what would collide if
+    src's contents were merged into dst. [NOT_A_DIR] if dst exists but isn't
+    a directory."""
+    if not src.is_dir():
+        return []
+    if dst.exists() and not dst.is_dir():
+        return [NOT_A_DIR]
+    if not dst.is_dir():
+        return []
+    dst_names = {e.name for e in dst.iterdir()}
+    return [e.name for e in src.iterdir() if e.name in dst_names]
+
+
+def do_merge_move(src: Path, dst: Path):
+    """Move src into dst: a plain rename if dst doesn't exist yet, otherwise
+    merge src's entries into it one by one (caller must have already
+    confirmed via merge_collisions that nothing will collide)."""
+    if not src.is_dir():
+        return
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return
+    for entry in list(src.iterdir()):
+        shutil.move(str(entry), str(dst / entry.name))
+    try:
+        src.rmdir()
+    except OSError:
+        pass
+
+
+def patch_json_field(field, old, new, files):
+    """Replace a top-level JSON string field's value across files, via exact
+    literal substitution (json.dumps for safe escaping) rather than a regex,
+    so paths containing '.', '*', etc. are handled safely. Returns the
+    number of files actually changed."""
+    old_tok = f'"{field}":{json.dumps(old)}'
+    new_tok = f'"{field}":{json.dumps(new)}'
+    changed = 0
+    for f in files:
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if old_tok in text:
+            f.write_text(text.replace(old_tok, new_tok), encoding="utf-8")
+            changed += 1
+    return changed
+
+
+def update_registry(old, new):
+    """Rename (or merge) an entry in the ~/.claude.json "projects" registry.
+    Returns one of: absent | renamed | kept-destination"""
+    registry = Path.home() / ".claude.json"
+    if not registry.is_file():
+        return "absent"
+    data = json.loads(registry.read_text())
+    projects = data.get("projects", {})
+    if old not in projects:
+        return "absent"
+    if new in projects:
+        projects.pop(old)
+        status = "kept-destination"
+    else:
+        projects[new] = projects.pop(old)
+        status = "renamed"
+    registry.write_text(json.dumps(data, separators=(",", ":")))
+    return status
+
+
+def update_db_entry(old, new):
+    """Rename (or merge) a claude-sessions.db row. Returns one of:
+    absent | renamed | kept-destination"""
+    db = load_db()
+    if find_entry(db, old) is None:
+        return "absent"
+    if find_entry(db, new) is not None:
+        write_db([(p, s) for p, s in db if p != old])
+        return "kept-destination"
+    write_db([(new, s) if p == old else (p, s) for p, s in db])
+    return "renamed"
+
+
+def move_project(old_arg, new_arg, sid_hint=None):
+    """Move everything associated with a directory from old_arg to new_arg:
+    the files themselves, Claude's session/project data, history.jsonl
+    entries, the cwd recorded inside moved session files, the ~/.claude.json
+    registry entry, and the claude-sessions.db row — merging into new_arg if
+    it already has any of the above rather than overwriting. Validates every
+    merge up front and makes no changes at all if anything would collide."""
+    old_path = str(Path(old_arg).resolve())
+    new_path = str(Path(new_arg).resolve())
+
+    if old_path == new_path:
+        print("  Source and destination are the same — nothing to do.", file=sys.stderr)
+        return 1
+
+    print("Moving:")
+    print(f"  from: {old_path}")
+    print(f"  to  : {new_path}")
+    print()
+
+    old_proj = find_project_dir(old_path, sid_hint) or project_dir_for(old_path)
+    new_proj = project_dir_for(new_path)
+
+    proj_collisions = merge_collisions(old_proj, new_proj)
+    fs_collisions = merge_collisions(Path(old_path), Path(new_path))
+    if proj_collisions or fs_collisions:
+        print("  Error: destination already contains conflicting items — aborted, nothing changed.", file=sys.stderr)
+        if proj_collisions:
+            if proj_collisions[0] == NOT_A_DIR:
+                print(f"    {new_proj} exists and is not a directory", file=sys.stderr)
+            else:
+                print(f"    Claude session data conflicts: {' '.join(proj_collisions)}", file=sys.stderr)
+        if fs_collisions:
+            if fs_collisions[0] == NOT_A_DIR:
+                print(f"    {new_path} exists and is not a directory", file=sys.stderr)
+            else:
+                print(f"    File conflicts: {' '.join(fs_collisions)}", file=sys.stderr)
+        return 1
+
+    # 1. Claude's own session/project directory
+    if old_proj.is_dir():
+        moved_jsonl = [f.name for f in old_proj.glob("*.jsonl")]
+        do_merge_move(old_proj, new_proj)
+        print(f"  Moved Claude session data: {old_proj} -> {new_proj}")
+        if moved_jsonl:
+            patch_files = [new_proj / name for name in moved_jsonl if (new_proj / name).is_file()]
+            n = patch_json_field("cwd", old_path, new_path, patch_files)
+            if n > 0:
+                print(f"  Updated cwd in {n} session file(s)")
+    else:
+        print("  (no Claude session data found for this directory)")
+
+    # 2. history.jsonl
+    history = CLAUDE_HOME / "history.jsonl"
+    if history.is_file():
+        if patch_json_field("project", old_path, new_path, [history]) > 0:
+            print("  Updated history.jsonl")
+
+    # 3. ~/.claude.json registry
+    status = update_registry(old_path, new_path)
+    if status == "renamed":
+        print("  Updated ~/.claude.json registry")
+    elif status == "kept-destination":
+        print(f"  ~/.claude.json already had an entry for {new_path} — kept it, discarded the one for {old_path}")
+
+    # 4. claude-sessions.db
+    status = update_db_entry(old_path, new_path)
+    if status == "renamed":
+        print("  Updated claude-sessions.db entry")
+    elif status == "kept-destination":
+        print(f"  claude-sessions.db already tracked {new_path} separately — kept it, dropped the entry for {old_path}")
+
+    # 5. the actual files
+    if Path(old_path).is_dir():
+        do_merge_move(Path(old_path), Path(new_path))
+        print(f"  Moved files: {old_path} -> {new_path}")
+    else:
+        print("  (source directory not found on disk — skipping file move)")
+
+    print()
+    print(f'Done. "claude --resume" / "claude --continue" from {new_path} will pick this up.')
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# claude launch helper
+# ---------------------------------------------------------------------------
+
+def exec_claude(args):
+    try:
+        os.execvp("claude", ["claude", *args])
+    except FileNotFoundError:
+        print("qclaude: 'claude' command not found", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# resume (-r)
+# ---------------------------------------------------------------------------
+
+def cmd_resume(args):
+    mode = None
+    if args and args[0] in ("--resume", "--continue"):
+        mode, args = args[0], args[1:]
+    extra = args
+    cwd = os.getcwd()
+    sid = find_entry(load_db(), cwd)
+
+    if mode == "--resume":
+        if sid:
+            print(f"Resuming session {sid}")
+            exec_claude(["--resume", sid, "--permission-mode", "bypassPermissions", *extra])
+        else:
+            print(f"No saved session for {cwd} — letting claude --resume pick")
+            exec_claude(["--resume", "--permission-mode", "bypassPermissions", *extra])
+    elif mode == "--continue":
+        print(f"Continuing most recent session in {cwd}")
+        exec_claude(["--continue", "--permission-mode", "bypassPermissions", *extra])
+    else:
+        if sid:
+            print(f"Resuming session {sid}")
+            exec_claude(["--continue", "--permission-mode", "bypassPermissions", *extra])
+        else:
+            print(f"No saved session for {cwd} — starting new session")
+            exec_claude(["--permission-mode", "bypassPermissions", *extra])
+
+
+# ---------------------------------------------------------------------------
+# save (-s)
+# ---------------------------------------------------------------------------
+
+def cmd_save(args):
+    cwd = os.getcwd()
+    sid = args[0] if args else None
+
+    if not sid:
+        sid = find_latest_session(cwd)
+        if not sid:
+            print(f"No session found for {cwd} — either pass a session ID or start a claude session first.", file=sys.stderr)
+            return 1
+        print(f"Auto-detected: {sid}")
+
+    db = load_db()
+    if sid_exists(db, sid):
+        print(f"Session {sid} is already saved — skipping.", file=sys.stderr)
+        return 0
+
+    for i, (p, _) in enumerate(db):
+        if p == cwd:
+            db[i] = (cwd, sid)
+            break
+    else:
+        db.append((cwd, sid))
+    write_db(db)
+    print(f"Saved session {sid} for {cwd}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# list (-l)
+# ---------------------------------------------------------------------------
+
+def cmd_list(args):
+    db = load_db()
+    if not db:
+        print("No saved sessions.")
+        return 0
+
+    cwd = os.getcwd()
+    print(f"{'DIRECTORY':<55}  {'SESSION ID':<36}  STATUS")
+    print(f"{'---------':<55}  {'----------':<36}  ------")
+    for path, sid in db:
+        if is_active(sid):
+            status = "\033[1;32mactive\033[0m"
+        elif has_session_file(sid):
+            status = "ok"
+        else:
+            status = "missing"
+        if path == cwd:
+            status += " *"
+        print(f"{path:<55}  {sid:<36}  {status}")
+    print()
+    print("  * = current directory")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# open (-o)
+# ---------------------------------------------------------------------------
+
+def cmd_open(args):
+    db = load_db()
+    if not db:
+        print("No saved sessions.", file=sys.stderr)
+        return 1
+
+    def blocked(path, sid):
+        return "Session is already active — exit it first." if is_active(sid) else None
+
+    selection = run_picker("Select a session to resume:", db, blocked)
+    if selection is None:
+        return 0
+    path, sid = selection
+    os.chdir(path)
+    exec_claude(["--continue", "--permission-mode", "acceptEdits"])
+
+
+# ---------------------------------------------------------------------------
+# delete (-d)
+# ---------------------------------------------------------------------------
+
+def do_delete(db, path, sid):
+    proj = find_project_dir(path, sid)
+    print(f"Directory  : {path}")
+    print(f"Session ID : {sid}")
+    print(f"Deleting   : {proj}" if proj else "Deleting   : (project dir not found — will remove DB entry only)")
+    if is_active(sid):
+        print("\033[1;31mError: session is currently active. Exit it before deleting.\033[0m")
+        return 1
+    print()
+    answer = input("Delete this session? [y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        print("Aborted.")
+        return 0
+
+    write_db([(p, s) for p, s in db if p != path])
+    print("Removed from database.")
+    if proj:
+        shutil.rmtree(proj, ignore_errors=True)
+        print(f"Deleted {proj}")
+    return 0
+
+
+def cmd_delete_clean():
+    db = load_db()
+    if not db:
+        print("No saved sessions.", file=sys.stderr)
+        return 1
+
+    missing = [(p, s) for p, s in db if not is_active(s) and not has_session_file(s)]
+    if not missing:
+        print("No missing sessions to clean.")
+        return 0
+
+    print("The following sessions are missing and will be removed from the database:")
+    print()
+    for p, s in missing:
+        print(f"  {p:<55}  {s}")
+    print()
+    answer = input(f"Remove {len(missing)} missing session(s) from the database? [y/N] ")
+    if answer.strip().lower() not in ("y", "yes"):
+        print("Aborted.")
+        return 0
+
+    missing_paths = {p for p, _ in missing}
+    write_db([(p, s) for p, s in db if p not in missing_paths])
+    print(f"Removed {len(missing)} entries from the database.")
+    return 0
+
+
+def cmd_delete(args):
+    if args and args[0] == "--clean":
+        return cmd_delete_clean()
+
+    db = load_db()
+    if not db:
+        print("No saved sessions.", file=sys.stderr)
+        return 1
+
+    cwd = os.getcwd()
+    sid = find_entry(db, cwd)
+    if sid is not None:
+        return do_delete(db, cwd, sid)
+
+    selection = run_picker("Select a session to delete:", db)
+    if selection is None:
+        print("Aborted.")
+        return 0
+    path, sid = selection
+    return do_delete(db, path, sid)
+
+
+# ---------------------------------------------------------------------------
+# edit (-e)
+# ---------------------------------------------------------------------------
+
+EDIT_HELP = """\
+Edit a saved session entry, or move a directory (files + all Claude session
+history/metadata) from one location to another.
+
+Usage:
+  qclaude edit                     If pwd is in the database: edit that entry.
+                                    Otherwise: interactive picker to choose one.
+  qclaude edit --move <src> <dst>  Move <src> to <dst> non-interactively: moves
+                                    the files, ~/.claude/projects/ session data,
+                                    history.jsonl entries, session cwd fields,
+                                    the ~/.claude.json registry entry, and the
+                                    claude-sessions.db row (if any) — whether or
+                                    not <src> is currently saved in the database.
+                                    If <dst> already exists, its contents are
+                                    merged rather than overwritten (fails only on
+                                    an actual name collision, leaving everything
+                                    untouched).
+  qclaude edit --help              Show this help."""
+
+
+def edit_session_id(db, path, old_sid):
+    auto = find_latest_session(path)
+    if auto and auto != old_sid:
+        print(f"  Auto-detect : {auto}")
+        new_sid = input("  New session ID (Enter to use auto-detected): ").strip()
+    else:
+        new_sid = input("  New session ID: ").strip()
+    new_sid = new_sid or auto or ""
+
+    if not new_sid:
+        print("No session ID provided — aborted.", file=sys.stderr)
+        return 1
+    if new_sid == old_sid:
+        print("  Session ID unchanged.")
+        return 0
+    if sid_exists(db, new_sid):
+        print(f"  Session {new_sid} is already saved for another entry — aborted.", file=sys.stderr)
+        return 1
+
+    write_db([(p, new_sid) if p == path else (p, s) for p, s in db])
+    print(f"  Updated: {old_sid} → {new_sid}")
+    return 0
+
+
+def edit_directory(old_path, sid):
+    new_path = input("  New directory path: ").strip()
+    if not new_path:
+        print("  No path provided — aborted.", file=sys.stderr)
+        return 1
+    return move_project(old_path, new_path, sid)
+
+
+def do_edit(db, path, sid):
+    print(f"Directory   : {path}")
+    print(f"Session ID  : {sid}")
+    if is_active(sid):
+        print("\033[1;31mError: session is currently active. Exit it before editing.\033[0m")
+        return 1
+    print()
+    print("  1) Edit session ID")
+    print("  2) Move directory")
+    print("  q) Quit")
+    print()
+    choice = input("Choice: ").strip()
+
+    if choice == "1":
+        return edit_session_id(db, path, sid)
+    if choice == "2":
+        return edit_directory(path, sid)
+    if choice.lower() == "q":
+        print("Aborted.")
+        return 0
+    print("Invalid choice — aborted.", file=sys.stderr)
+    return 1
+
+
+def cmd_edit(args):
+    if args and args[0] in ("-h", "--help"):
+        print(EDIT_HELP)
+        return 0
+    if args and args[0] == "--move":
+        if len(args) != 3:
+            print("Usage: qclaude edit --move <source-dir> <destination-dir>", file=sys.stderr)
+            return 1
+        return move_project(args[1], args[2])
+
+    db = load_db()
+    if not db:
+        print("No saved sessions.", file=sys.stderr)
+        return 1
+
+    cwd = os.getcwd()
+    sid = find_entry(db, cwd)
+    if sid is not None:
+        return do_edit(db, cwd, sid)
+
+    selection = run_picker("Select a session to edit:", db)
+    if selection is None:
+        print("Aborted.")
+        return 0
+    path, sid = selection
+    return do_edit(db, path, sid)
+
+
+# ---------------------------------------------------------------------------
+# top-level dispatch
+# ---------------------------------------------------------------------------
+
+VERBS = {
+    "-r": "resume", "resume": "resume",
+    "-s": "save", "save": "save",
+    "-l": "list", "list": "list",
+    "-o": "open", "open": "open",
+    "-e": "edit", "edit": "edit",
+    "-d": "delete", "delete": "delete",
+}
+
+HANDLERS = {
+    "resume": cmd_resume,
+    "save": cmd_save,
+    "list": cmd_list,
+    "open": cmd_open,
+    "edit": cmd_edit,
+    "delete": cmd_delete,
+}
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+
+    if not argv:
+        return cmd_resume([])
+
+    first, rest = argv[0], argv[1:]
+    if first in ("-h", "--help"):
+        print(__doc__)
+        return 0
+
+    verb = VERBS.get(first)
+    if verb is None:
+        print(f"qclaude: unknown command '{first}'", file=sys.stderr)
+        print(__doc__, file=sys.stderr)
+        return 1
+
+    return HANDLERS[verb](rest)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

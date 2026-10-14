@@ -1,66 +1,76 @@
-# oclaude
+# qclaude
 
-Shell scripts for saving and resuming [Claude Code](https://claude.ai/code) sessions by directory.
+A single command for saving and resuming [Claude Code](https://claude.ai/code) sessions by directory.
 
 ## Overview
 
-Claude Code sessions are ephemeral by default. These scripts let you save a session ID against a directory, resume it later, and manage saved sessions from the command line.
+Claude Code sessions are ephemeral by default. `qclaude` lets you save a session ID against a directory, resume it later, and manage saved sessions from the command line — all through one tool, dispatched by command.
 
-| Script | Purpose |
-|--------|---------|
-| `oclaude` | Interactive picker — browse and launch any saved session |
-| `sclaude` | Save a session for the current directory |
-| `rclaude` | Resume the saved session for the current directory |
-| `lclaude` | List all saved sessions |
-| `eclaude` | Edit session ID, or move/merge a directory (updates all Claude metadata) |
-| `dclaude` | Delete a saved session |
+| Command | Flag | Purpose |
+|---------|------|---------|
+| `qclaude resume` | `-r` | Resume the saved session for the current directory (the default — bare `qclaude` does this) |
+| `qclaude save` | `-s` | Save a session for the current directory |
+| `qclaude list` | `-l` | List all saved sessions |
+| `qclaude open` | `-o` | Interactive picker — browse and launch any saved session |
+| `qclaude edit` | `-e` | Edit session ID, or move/merge a directory (updates all Claude metadata) |
+| `qclaude delete` | `-d` | Delete a saved session, or bulk-remove stale ones |
+| — | `-h`, `--help` | Show usage |
 
-Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per line) alongside the scripts.
+Each command accepts either form (`qclaude -d --clean` and `qclaude delete --clean` are identical). Anything after the command is that command's own arguments, passed through unchanged.
+
+Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per line) alongside the script.
 
 ## Quick start
 
 ```bash
-oclaude   # pick any saved session and jump straight in
+qclaude          # resume the saved session for the current directory
+qclaude -o       # or: pick any saved session and jump straight in
 ```
 
 ## Installation
 
-Clone the repo and symlink the scripts into a directory on your `$PATH`:
+Clone the repo and symlink `qclaude` into a directory on your `$PATH`:
 
 ```bash
 git clone git@github.com:allsharer/qclaude.git ~/Dropbox/Bin/qclaude
 cd ~/Dropbox/Bin/qclaude
 
-ln -s "$PWD/oclaude" ~/bin/oclaude
-ln -s "$PWD/sclaude" ~/bin/sclaude
-ln -s "$PWD/rclaude" ~/bin/rclaude
-ln -s "$PWD/lclaude" ~/bin/lclaude
-ln -s "$PWD/eclaude" ~/bin/eclaude
-ln -s "$PWD/dclaude" ~/bin/dclaude
+ln -s "$PWD/qclaude" ~/bin/qclaude
 ```
 
 Adjust the target directory (`~/bin`) to any directory already on your `$PATH`.
 
 ## Usage
 
-### `oclaude` — Session picker
+### `qclaude` / `qclaude -r` / `qclaude resume` — resume a session
 
 ```bash
-oclaude
+qclaude [--resume|--continue] [extra claude args...]
 ```
 
-Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `PgUp`/`PgDn` to page, `Home`/`End` to jump to the first/last entry, `Enter` to launch, `q` to quit. Long lists scroll within a viewport that follows the selection, with `↑ N more above` / `↓ N more below` markers.
+Run this from a project directory to pick up where you left off.
 
-- Active sessions are shown with an `[active]` label and cannot be selected — exit the running session first.
-- On selection, Claude Code resumes in `--permission-mode acceptEdits` with that session's directory as the working directory.
-- Your shell's working directory is unchanged after you exit claude.
+- **No flag** — if a session is saved for the current directory, runs `claude --continue --permission-mode bypassPermissions`. If no session is saved, starts a fresh `claude --permission-mode bypassPermissions` session.
+- **`--resume`** — forces `claude --resume <session-id> --permission-mode bypassPermissions` using the saved session ID. If no session is saved for the current directory, runs plain `claude --resume --permission-mode bypassPermissions` so Claude's own picker is shown.
+- **`--continue`** — forces `claude --continue --permission-mode bypassPermissions`, regardless of what is or isn't saved in `claude-sessions.db`.
+- Any extra arguments are passed through to `claude`.
+
+These are `resume`'s own flags (distinct from the `-r` that selects the `resume` command itself), named after the underlying `claude` flag each forces.
+
+```bash
+cd ~/myproject
+qclaude
+qclaude -r --resume
+qclaude -r --continue
+qclaude -r --model claude-opus-4-5
+```
 
 ---
 
-### `sclaude` — Save a session
+### `qclaude -s` / `qclaude save` — save a session
 
 ```bash
-sclaude [session-id]
+qclaude -s [session-id]
 ```
 
 Run this inside a project directory after starting a Claude Code session.
@@ -70,39 +80,16 @@ Run this inside a project directory after starting a Claude Code session.
 
 ```bash
 cd ~/myproject
-sclaude                            # auto-detect latest session
-sclaude 248f0e73-e6ea-4311-...    # save a specific session ID
+qclaude -s                            # auto-detect latest session
+qclaude -s 248f0e73-e6ea-4311-...    # save a specific session ID
 ```
 
 ---
 
-### `rclaude` — Resume a session
+### `qclaude -l` / `qclaude list` — list sessions
 
 ```bash
-rclaude [-r|-c] [extra claude args...]
-```
-
-Run this from a project directory to pick up where you left off.
-
-- **No flag** — if a session is saved for the current directory, runs `claude --continue --permission-mode bypassPermissions`. If no session is saved, starts a fresh `claude --permission-mode bypassPermissions` session.
-- **`-r`** — forces `claude --resume <session-id> --permission-mode bypassPermissions` using the saved session ID. If no session is saved for the current directory, runs plain `claude --resume --permission-mode bypassPermissions` so Claude's own picker is shown.
-- **`-c`** — forces `claude --continue --permission-mode bypassPermissions`, regardless of what is or isn't saved in `claude-sessions.db`.
-- Any extra arguments are passed through to `claude`.
-
-```bash
-cd ~/myproject
-rclaude
-rclaude -r
-rclaude -c
-rclaude --model claude-opus-4-5
-```
-
----
-
-### `lclaude` — List sessions
-
-```bash
-lclaude
+qclaude -l
 ```
 
 Prints all saved sessions with their status:
@@ -121,14 +108,28 @@ DIRECTORY                                                SESSION ID             
 |--------|---------|
 | `active` | A Claude Code process for this session is currently running |
 | `ok` | Session file exists on disk, not currently active |
-| `missing` | Session file not found (deleted outside of `dclaude`) |
+| `missing` | Session file not found (deleted outside of `qclaude -d`) |
 
 ---
 
-### `eclaude` — Edit a session
+### `qclaude -o` / `qclaude open` — interactive session picker
 
 ```bash
-eclaude
+qclaude -o
+```
+
+Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `PgUp`/`PgDn` to page, `Home`/`End` to jump to the first/last entry, `Enter` to launch, `q` to quit. Long lists scroll within a viewport that follows the selection, with `↑ N more above` / `↓ N more below` markers.
+
+- Active sessions are shown with an `[active]` label and cannot be selected — exit the running session first.
+- On selection, Claude Code resumes in `--permission-mode acceptEdits` with that session's directory as the working directory.
+- Your shell's working directory is unchanged after you exit claude.
+
+---
+
+### `qclaude -e` / `qclaude edit` — edit a session
+
+```bash
+qclaude -e
 ```
 
 - **If the current directory has a saved session** — edits that entry directly.
@@ -137,22 +138,22 @@ eclaude
 After selecting an entry, choose what to update:
 
 - **1) Edit session ID** — prompts for a new session ID. If a newer session exists in `~/.claude/projects/` for that directory it is offered as a suggestion; press `Enter` to accept or type a different ID.
-- **2) Move directory** — prompts for a new directory path, then moves everything there in one step (see `eclaude --move` below for exactly what moves).
+- **2) Move directory** — prompts for a new directory path, then moves everything there in one step (see `qclaude -e --move` below for exactly what moves).
 
 Active sessions cannot be edited. A session ID already saved for another entry will be rejected.
 
 ---
 
-### `eclaude --move` — Move a directory non-interactively
+### `qclaude -e --move` — move a directory non-interactively
 
 ```bash
-eclaude --move <source-dir> <destination-dir>
+qclaude -e --move <source-dir> <destination-dir>
 ```
 
 Moves a directory and everything Claude Code knows about it, so `claude --resume` / `claude --continue` work correctly from the new location afterward:
 
 - the files themselves
-- the `~/.claude/projects/` session data (all `.jsonl` transcripts, not just the one `eclaude`/`sclaude` happen to have saved)
+- the `~/.claude/projects/` session data (all `.jsonl` transcripts, not just the one `qclaude` happens to have saved)
 - the `cwd` field recorded inside each moved session file
 - matching entries in `~/.claude/history.jsonl`
 - the project's entry in the `~/.claude.json` registry
@@ -163,15 +164,15 @@ Works whether or not `<source-dir>` is currently saved in the database — it on
 **If `<destination-dir>` already exists**, its contents are merged into rather than overwritten: files are moved in one by one. If any name would actually collide (same filename in both directories, or the destination is already a separately-tracked Claude project with its own session data), nothing is changed and an error explains what conflicts — safe to re-run after resolving it. When the destination is already a separately-tracked project with no filename conflicts, both sides' session history end up living together under the destination (multiple `.jsonl` transcripts, all resumable), and the destination's existing `claude-sessions.db`/`~/.claude.json` entries are kept while the source's are discarded (since a path can only have one entry).
 
 ```bash
-eclaude --move ~/work/old-project-name ~/work/new-project-name
+qclaude -e --move ~/work/old-project-name ~/work/new-project-name
 ```
 
 ---
 
-### `dclaude` — Delete a session
+### `qclaude -d` / `qclaude delete` — delete a session
 
 ```bash
-dclaude
+qclaude -d
 ```
 
 - **If the current directory has a saved session** — shows the details and asks for confirmation before deleting.
@@ -179,22 +180,37 @@ dclaude
 
 Active sessions (currently running) cannot be deleted. Exit the Claude Code session first.
 
-On confirmation, `dclaude` removes the database entry **and** deletes the entire `~/.claude/projects/<dir>/` directory (session history, memory, everything).
+On confirmation, `qclaude -d` removes the database entry **and** deletes the entire `~/.claude/projects/<dir>/` directory (session history, memory, everything).
 
 ```bash
-dclaude --clean
+qclaude -d --clean
 ```
 
-Removes every database entry whose status is `missing` (see `lclaude`) in one pass. Lists the sessions to be removed, asks for a single confirmation, then rewrites the database — active and `ok` sessions are left untouched, and since there's no project directory to match a missing session, only the database entry is removed.
+Removes every database entry whose status is `missing` (see `qclaude -l`) in one pass. Lists the sessions to be removed, asks for a single confirmation, then rewrites the database — active and `ok` sessions are left untouched, and since there's no project directory to match a missing session, only the database entry is removed.
+
+---
+
+### `qclaude -h` / `qclaude --help` — usage
+
+```bash
+qclaude -h
+```
+
+Prints the full command summary (the text at the top of this README's Overview table, plus each flag/word form) and exits.
 
 ## How it works
 
-Claude Code stores session files under `~/.claude/projects/<encoded-path>/` where the directory path has `/` and `.` replaced with `-`. The `sclaude` auto-detect reads the most recent `.jsonl` file from that directory to find the latest session ID.
+Claude Code stores session files under `~/.claude/projects/<encoded-path>/` where the directory path has `/` and `.` replaced with `-`. The `save` command's auto-detect reads the most recent `.jsonl` file from that directory to find the latest session ID.
 
 Active session detection works by scanning `~/.claude/sessions/*.json` for a matching `sessionId` and confirming the recorded `pid` is still a running process.
+
+## Legacy standalone scripts
+
+`oclaude`, `sclaude`, `rclaude`, `lclaude`, `eclaude`, and `dclaude` — the original six standalone scripts `qclaude` replaces — remain in this repo unchanged and still work exactly as before. `qclaude` is the maintained, recommended entry point going forward; the six scripts have no planned removal date but are no longer being developed.
 
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) CLI (`claude`)
-- bash 4+
-- Standard Unix tools: `awk`, `find`, `grep`, `tput`
+- Python 3.8+ (stdlib only — no third-party packages)
+
+The legacy standalone scripts additionally require bash 4+ and `awk`, `find`, `grep`, `python3`, `sed`, `tput`.
