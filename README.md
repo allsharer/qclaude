@@ -6,12 +6,15 @@ A single command for saving and resuming [Claude Code](https://claude.ai/code) s
 
 Claude Code sessions are ephemeral by default. `qclaude` lets you save a session ID against a directory, resume it later, and manage saved sessions from the command line — all through one tool, dispatched by command.
 
+Running `qclaude` with no arguments opens an interactive table of every saved session, and most day-to-day work happens right there: `Enter` resumes the highlighted one, `e` edits it, `d` deletes it — no need to `cd` into the directory first or remember a separate command for each. The individual commands below still exist for direct, scriptable, single-purpose use.
+
 | Command | Flag | Purpose |
 |---------|------|---------|
-| `qclaude resume` | `-r` | Resume the saved session for the current directory (the default — bare `qclaude` does this) |
+| — | (bare `qclaude`) | Open the interactive table — resume/edit/delete from one view |
+| `qclaude resume` | `-r` | Resume the saved session for the current directory directly, no table |
 | `qclaude save` | `-s` | Save a session for the current directory |
-| `qclaude list` | `-l` | List all saved sessions |
-| `qclaude open` | `-o` | Interactive picker — browse and launch any saved session |
+| `qclaude list` | `-l` | List all saved sessions (non-interactive; the table's Active column already shows this) |
+| `qclaude open` | `-o` | Same interactive table as bare `qclaude` |
 | `qclaude edit` | `-e` | Edit session ID, or move/merge a directory (updates all Claude metadata) |
 | `qclaude delete` | `-d` | Delete a saved session, or bulk-remove stale ones |
 | — | `-h`, `--help` | Show usage |
@@ -23,8 +26,7 @@ Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per lin
 ## Quick start
 
 ```bash
-qclaude          # resume the saved session for the current directory
-qclaude -o       # or: pick any saved session and jump straight in
+qclaude          # open the table: Enter resumes, e edits, d deletes
 ```
 
 ## Installation
@@ -42,13 +44,13 @@ Adjust the target directory (`~/bin`) to any directory already on your `$PATH`.
 
 ## Usage
 
-### `qclaude` / `qclaude -r` / `qclaude resume` — resume a session
+### `qclaude -r` / `qclaude resume` — resume a session directly
 
 ```bash
-qclaude [--resume|--continue] [extra claude args...]
+qclaude -r [--resume|--continue] [extra claude args...]
 ```
 
-Run this from a project directory to pick up where you left off.
+Run this from a project directory to pick up where you left off, without going through the interactive table — useful for scripts, aliases, or muscle memory. (Bare `qclaude`, with no command at all, opens the table instead — see below.)
 
 - **No flag** — if a session is saved for the current directory, runs `claude --continue --permission-mode bypassPermissions`. If no session is saved, starts a fresh `claude --permission-mode bypassPermissions` session.
 - **`--resume`** — forces `claude --resume <session-id> --permission-mode bypassPermissions` using the saved session ID. If no session is saved for the current directory, runs plain `claude --resume --permission-mode bypassPermissions` so Claude's own picker is shown.
@@ -59,7 +61,7 @@ These are `resume`'s own flags (distinct from the `-r` that selects the `resume`
 
 ```bash
 cd ~/myproject
-qclaude
+qclaude -r
 qclaude -r --resume
 qclaude -r --continue
 qclaude -r --model claude-opus-4-5
@@ -112,17 +114,30 @@ DIRECTORY                                                SESSION ID             
 
 ---
 
-### `qclaude -o` / `qclaude open` — interactive session picker
+### `qclaude` / `qclaude -o` / `qclaude open` — the interactive table
 
 ```bash
-qclaude -o
+qclaude
+qclaude -o     # identical — just the explicit form
 ```
 
-Opens an interactive picker listing all saved sessions. Use `↑`/`↓` to navigate, `PgUp`/`PgDn` to page, `Home`/`End` to jump to the first/last entry, `Enter` to launch, `q` to quit. Long lists scroll within a viewport that follows the selection, with `↑ N more above` / `↓ N more below` markers.
+Opens a ruled table of every saved session — **Directory**, **Session ID**, **Active** — and lets you act on the highlighted row directly:
 
-- Active sessions are shown with an `[active]` label and cannot be selected — exit the running session first.
-- On selection, Claude Code resumes in `--permission-mode acceptEdits` with that session's directory as the working directory.
-- Your shell's working directory is unchanged after you exit claude.
+| Key | Action |
+|-----|--------|
+| `↑`/`↓` | Move the selection |
+| `PgUp`/`PgDn` | Page up/down |
+| `Home`/`End` | Jump to the first/last entry |
+| `Enter` | Resume the highlighted session |
+| `e` | Edit the highlighted session (same menu as `qclaude -e`) |
+| `d` | Delete the highlighted session (same confirmation as `qclaude -d`) |
+| `q` | Quit |
+
+Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers.
+
+- A session already active is shown with `ACTIVE` in its row and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
+- `e` and `d` drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete or a rename is reflected immediately.
+- `Enter` resumes Claude Code in `--permission-mode acceptEdits`, cd'd into that session's directory. Your shell's own working directory is unchanged after you exit claude.
 
 ---
 

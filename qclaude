@@ -4,12 +4,17 @@ working directory, from one tool.
 
 Usage: qclaude [command] [args...]
 
-Commands (flag or word form; bare "qclaude" resumes, same as "qclaude -r"):
+Bare "qclaude" (no command) opens the same interactive picker as "qclaude
+-o": a table of all saved sessions where Enter resumes the highlighted one,
+e edits it, d deletes it, and q quits — the table's Active column already
+shows what "list" would, so most day-to-day use needs nothing but this.
+
+Commands (flag or word form):
   -r, resume [--resume|--continue] [claude-args...]
                                          Resume the saved session for $PWD
   -s, save [session-id]                 Save the current directory's session
   -l, list                              List all saved sessions
-  -o, open                              Interactive picker to resume any session
+  -o, open                              Interactive picker (same as bare qclaude)
   -e, edit [--move <src> <dst>]         Edit a session entry, or move a directory
   -d, delete [--clean]                  Delete a session, or bulk-remove missing ones
   -h, --help                            Show this help
@@ -196,12 +201,25 @@ def _row(cells, widths, reverse=False):
     return BOX_V + BOX_V.join(parts) + BOX_V
 
 
-def run_picker(prompt, entries, blocked_msg=None):
+DEFAULT_HINT = "↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit"
+
+
+def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAULT_HINT):
     """Interactive list picker over (path, sid) entries, rendered as a ruled
-    table (Directory / Session ID / Active). Returns the selected (path,
-    sid), or None if the user quit. `blocked_msg(path, sid)` may return a
-    message to show instead of allowing that entry to be selected (e.g. a
-    currently-active session)."""
+    table (Directory / Session ID / Active).
+
+    With no `extra_actions`, returns the selected (path, sid) on Enter, or
+    None if the user quit — this is the plain single-purpose picker used by
+    `delete`/`edit`'s own "pick one" fallback.
+
+    With `extra_actions` (a {key_bytes: action_name} map, e.g. {b"d":
+    "delete"}), Enter instead returns ("select", path, sid), a mapped key
+    returns (action_name, path, sid), and quitting still returns None — used
+    by the multi-action console picker (bare `qclaude` / `qclaude -o`).
+
+    `blocked_msg(path, sid)` may return a message to show instead of
+    allowing Enter to select that entry (e.g. a currently-active session);
+    it does not apply to `extra_actions` keys."""
     if not entries:
         return None
 
@@ -260,7 +278,7 @@ def run_picker(prompt, entries, blocked_msg=None):
         if msg:
             out.append(f"\033[1;31m  {msg}\033[0m\r\n")
         else:
-            out.append("\033[2m  ↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit\033[0m\r\n")
+            out.append(f"\033[2m  {hint}\033[0m\r\n")
         sys.stdout.write("".join(out))
         sys.stdout.flush()
 
@@ -301,7 +319,10 @@ def run_picker(prompt, entries, blocked_msg=None):
                     msg = reason
                     draw(True)
                 else:
-                    return entries[selected]
+                    return ("select", path, sid) if extra_actions else (path, sid)
+            elif extra_actions and key in extra_actions:
+                path, sid = entries[selected]
+                return (extra_actions[key], path, sid)
             elif key in QUIT_KEYS:
                 return None
     finally:
@@ -584,24 +605,41 @@ def cmd_list(args):
 
 
 # ---------------------------------------------------------------------------
-# open (-o)
+# open (-o, and bare "qclaude" with no arguments)
 # ---------------------------------------------------------------------------
 
+OPEN_EXTRA_ACTIONS = {b"d": "delete", b"D": "delete", b"e": "edit", b"E": "edit"}
+OPEN_HINT = "↑/↓ move   PgUp/PgDn   Home/End   Enter resume   e edit   d delete   q quit"
+
+
 def cmd_open(args):
-    db = load_db()
-    if not db:
-        print("No saved sessions.", file=sys.stderr)
-        return 1
+    while True:
+        db = load_db()
+        if not db:
+            print("No saved sessions.", file=sys.stderr)
+            return 1
 
-    def blocked(path, sid):
-        return "Session is already active — exit it first." if is_active(sid) else None
+        def blocked(path, sid):
+            return "Session is already active — exit it first." if is_active(sid) else None
 
-    selection = run_picker("Select a session to resume:", db, blocked)
-    if selection is None:
-        return 0
-    path, sid = selection
-    os.chdir(path)
-    exec_claude(["--continue", "--permission-mode", "acceptEdits"])
+        result = run_picker(
+            "Saved sessions:", db, blocked,
+            extra_actions=OPEN_EXTRA_ACTIONS, hint=OPEN_HINT,
+        )
+        if result is None:
+            return 0
+        action, path, sid = result
+
+        if action == "select":
+            os.chdir(path)
+            exec_claude(["--continue", "--permission-mode", "acceptEdits"])
+            return 0  # unreachable on success; exec_claude exits on failure
+
+        if action == "delete":
+            do_delete(db, path, sid)
+        elif action == "edit":
+            do_edit(db, path, sid)
+        input("\nPress Enter to return to the list... ")
 
 
 # ---------------------------------------------------------------------------
@@ -814,7 +852,7 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
 
     if not argv:
-        return cmd_resume([])
+        return cmd_open([])
 
     first, rest = argv[0], argv[1:]
     if first in ("-h", "--help"):
