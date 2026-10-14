@@ -167,11 +167,41 @@ def read_key(fd):
     return seq
 
 
+# Box-drawing characters for the picker's ruled table.
+BOX_H, BOX_V = "─", "│"
+BOX_TL, BOX_TM, BOX_TR = "┌", "┬", "┐"
+BOX_ML, BOX_MM, BOX_MR = "├", "┼", "┤"
+BOX_BL, BOX_BM, BOX_BR = "└", "┴", "┘"
+
+
+def _truncate(text, width):
+    if len(text) <= width:
+        return text
+    if width <= 1:
+        return text[:width]
+    return text[: width - 1] + "…"
+
+
+def _hline(widths, left, mid, right):
+    return left + mid.join(BOX_H * (w + 2) for w in widths) + right
+
+
+def _row(cells, widths, reverse=False):
+    parts = []
+    for text, w in zip(cells, widths):
+        padded = f"{_truncate(text, w):<{w}}"
+        if reverse:
+            padded = f"\033[7m{padded}\033[0m"
+        parts.append(" " + padded + " ")
+    return BOX_V + BOX_V.join(parts) + BOX_V
+
+
 def run_picker(prompt, entries, blocked_msg=None):
-    """Interactive list picker over (path, sid) entries. Returns the selected
-    (path, sid), or None if the user quit. `blocked_msg(path, sid)` may
-    return a message to show instead of allowing that entry to be selected
-    (e.g. a currently-active session)."""
+    """Interactive list picker over (path, sid) entries, rendered as a ruled
+    table (Directory / Session ID / Active). Returns the selected (path,
+    sid), or None if the user quit. `blocked_msg(path, sid)` may return a
+    message to show instead of allowing that entry to be selected (e.g. a
+    currently-active session)."""
     if not entries:
         return None
 
@@ -182,8 +212,15 @@ def run_picker(prompt, entries, blocked_msg=None):
     total = len(entries)
     msg = ""
 
+    # Each row takes two terminal lines (the row itself, plus the ruled
+    # separator below it) except the last, which is followed by the bottom
+    # border instead — so for N visible rows the table uses (2N - 1) lines,
+    # on top of a fixed amount of chrome (prompt, borders, header, footer).
+    FRAME_LINES = 10
+
     def page_size():
-        return max(1, shutil.get_terminal_size(fallback=(80, 24)).lines - 6)
+        budget = shutil.get_terminal_size(fallback=(80, 24)).lines - FRAME_LINES
+        return max(1, (budget + 1) // 2)
 
     def draw(redraw=False):
         nonlocal top
@@ -198,22 +235,32 @@ def run_picker(prompt, entries, blocked_msg=None):
             top = 0
         end = min(top + page, total)
 
+        term_w = shutil.get_terminal_size(fallback=(80, 24)).columns
+        sid_w, active_w = 36, 6
+        path_w = max(20, term_w - sid_w - active_w - 10)
+        widths = [path_w, sid_w, active_w]
+
         out = []
         if redraw:
             out.append("\0338\033[J")  # restore cursor, erase to end of screen
-        out.append(f"{prompt}\n\n")
-        out.append(f"\033[2m  ↑ {top} more above\033[0m\n" if top > 0 else "\n")
+        out.append(f"{prompt}\r\n\r\n")
+        out.append(f"\033[2m  ↑ {top} more above\033[0m\r\n" if top > 0 else "\r\n")
+        out.append(_hline(widths, BOX_TL, BOX_TM, BOX_TR) + "\r\n")
+        out.append(_row(["Directory", "Session ID", "Active"], widths) + "\r\n")
+        out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         for i in range(top, end):
             path, sid = entries[i]
-            tag = "  \033[1;32m[active]\033[0m" if is_active(sid) else ""
-            marker = "\033[1;33m>\033[0m" if i == selected else " "
-            out.append(f"{marker} {path:<52}  {sid}{tag}\n")
-        out.append(f"\033[2m  ↓ {total - end} more below\033[0m\n" if end < total else "\n")
-        out.append("\n")
+            active_text = "ACTIVE" if is_active(sid) else ""
+            out.append(_row([path, sid, active_text], widths, reverse=(i == selected)) + "\r\n")
+            if i != end - 1:
+                out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
+        out.append(_hline(widths, BOX_BL, BOX_BM, BOX_BR) + "\r\n")
+        out.append(f"\033[2m  ↓ {total - end} more below\033[0m\r\n" if end < total else "\r\n")
+        out.append("\r\n")
         if msg:
-            out.append(f"\033[1;31m  {msg}\033[0m\n")
+            out.append(f"\033[1;31m  {msg}\033[0m\r\n")
         else:
-            out.append("\033[2m  ↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit\033[0m\n")
+            out.append("\033[2m  ↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit\033[0m\r\n")
         sys.stdout.write("".join(out))
         sys.stdout.flush()
 
