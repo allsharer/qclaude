@@ -5,10 +5,12 @@ working directory, from one tool.
 Usage: qclaude [command] [args...]
 
 Bare "qclaude" (no command) opens the same interactive picker as "qclaude
--o": a table of all saved sessions where Enter resumes the highlighted one,
-e edits it, d deletes it (or cleans up every missing entry, your choice),
-and q quits — the table's Status column already shows what "list" would,
-so most day-to-day use needs nothing but this.
+-o": a table of all saved sessions, most recently used first, where /
+searches, Enter resumes the highlighted one (returning to the table once
+that claude session ends), e edits it, d deletes it (or cleans up every
+missing entry, your choice), and q quits — the table's Status column
+already shows what "list" would, so most day-to-day use needs nothing but
+this.
 
 Commands (flag or word form):
   -r, resume [--resume|--continue] [claude-args...]
@@ -29,6 +31,7 @@ import json
 import os
 import select
 import shutil
+import subprocess
 import sys
 import termios
 import tty
@@ -46,6 +49,11 @@ NOT_A_DIR = "__NOT_A_DIR__"
 # ---------------------------------------------------------------------------
 
 def load_db():
+    """Parsed claude-sessions.db entries, sorted most-recently-used first
+    (by the mtime of each session's .jsonl file — a session actively being
+    used keeps advancing; one never saved or long untouched sinks to the
+    bottom). Every consumer (list, the picker, etc.) gets this ordering for
+    free, including whatever a mutating call then writes back out."""
     if not DB_PATH.is_file():
         return []
     entries = []
@@ -56,6 +64,7 @@ def load_db():
         path = parts[0]
         sid = parts[1] if len(parts) > 1 else ""
         entries.append((path, sid))
+    entries.sort(key=lambda e: session_mtime(e[1]) or float("-inf"), reverse=True)
     return entries
 
 
@@ -116,6 +125,16 @@ def has_session_file(sid):
     if not projects.is_dir():
         return False
     return next(projects.glob(f"*/{sid}.jsonl"), None) is not None
+
+
+def session_mtime(sid):
+    """Last-modified time of this session's .jsonl file, or None if it
+    doesn't exist (used to sort the database most-recently-used first)."""
+    projects = CLAUDE_HOME / "projects"
+    if not projects.is_dir():
+        return None
+    found = next(projects.glob(f"*/{sid}.jsonl"), None)
+    return found.stat().st_mtime if found else None
 
 
 def session_status(sid):
@@ -214,7 +233,7 @@ def _row(cells, widths, reverse=False):
     return BOX_V + BOX_V.join(parts) + BOX_V
 
 
-DEFAULT_HINT = "↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q quit"
+DEFAULT_HINT = "↑/↓ move   PgUp/PgDn page   Home/End jump   / search   Enter select   q quit"
 
 
 def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAULT_HINT):
@@ -242,6 +261,32 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
     top = 0
     total = len(entries)
     msg = ""
+    search_mode = False
+    query = ""
+    search_has_match = True
+
+    def best_match(q):
+        """Index of the entry whose Directory best matches q, or None if
+        nothing matches at all. An exact substring beats a fuzzy (in-order,
+        not necessarily contiguous) one; ties broken by earliest/shortest."""
+        if not q:
+            return None
+        ql = q.lower()
+        best_i, best_key = None, None
+        for i, (path, _sid) in enumerate(entries):
+            pl = path.lower()
+            idx = pl.find(ql)
+            if idx != -1:
+                key = (0, idx, len(path))
+            else:
+                it = iter(pl)
+                if all(ch in it for ch in ql):
+                    key = (1, len(path))
+                else:
+                    continue
+            if best_key is None or key < best_key:
+                best_i, best_key = i, key
+        return best_i
 
     # Each row takes two terminal lines (the row itself, plus the ruled
     # separator below it) except the last, which is followed by the bottom
@@ -288,7 +333,10 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         out.append(_hline(widths, BOX_BL, BOX_BM, BOX_BR) + "\r\n")
         out.append(f"\033[2m  ↓ {total - end} more below\033[0m\r\n" if end < total else "\r\n")
         out.append("\r\n")
-        if msg:
+        if search_mode:
+            note = "" if (not query or search_has_match) else "  \033[2m(no match)\033[0m"
+            out.append(f"  / {query}\033[7m \033[0m{note}\r\n")
+        elif msg:
             out.append(f"\033[1;31m  {msg}\033[0m\r\n")
         else:
             out.append(f"\033[2m  {hint}\033[0m\r\n")
@@ -323,6 +371,31 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
                 elif key in END_KEYS:
                     selected = total - 1
                 selected = max(0, min(total - 1, selected))
+                msg = ""
+                draw(True)
+            elif search_mode:
+                if key in ENTER_KEYS or key in (b"\x1b", b"\x03"):
+                    search_mode = False
+                    draw(True)
+                elif key in (b"\x7f", b"\x08"):
+                    query = query[:-1]
+                    idx = best_match(query)
+                    search_has_match = idx is not None or not query
+                    if idx is not None:
+                        selected = idx
+                    draw(True)
+                elif len(key) == 1 and 0x20 <= key[0] <= 0x7E:
+                    query += chr(key[0])
+                    idx = best_match(query)
+                    search_has_match = idx is not None
+                    if idx is not None:
+                        selected = idx
+                    draw(True)
+                # else: ignore other bytes (unrecognized escape sequences, etc.)
+            elif key == b"/":
+                search_mode = True
+                query = ""
+                search_has_match = True
                 msg = ""
                 draw(True)
             elif key in ENTER_KEYS:
@@ -564,6 +637,16 @@ def exec_claude(args):
         sys.exit(1)
 
 
+def run_claude_and_wait(args):
+    """Like exec_claude, but runs claude as a child and returns once it
+    exits instead of replacing the current process — used when the caller
+    (the console table) wants control back afterward rather than ending."""
+    try:
+        subprocess.run(["claude", *args])
+    except FileNotFoundError:
+        print("qclaude: 'claude' command not found", file=sys.stderr)
+
+
 # ---------------------------------------------------------------------------
 # resume (-r)
 # ---------------------------------------------------------------------------
@@ -656,7 +739,7 @@ def cmd_list(args):
 # ---------------------------------------------------------------------------
 
 OPEN_EXTRA_ACTIONS = {b"d": "delete", b"D": "delete", b"e": "edit", b"E": "edit"}
-OPEN_HINT = "↑/↓ move   PgUp/PgDn   Home/End   Enter resume   e edit   d delete   q quit"
+OPEN_HINT = "↑/↓ move   PgUp/PgDn   Home/End   / search   Enter resume   e edit   d delete   q quit"
 
 
 def cmd_open(args):
@@ -682,12 +765,15 @@ def cmd_open(args):
                 os.chdir(path)
             except OSError as e:
                 print(f"\033[1;31mError: can't switch to {path}: {e.strerror}\033[0m")
+                input("\nPress Enter to return to the list... ")
             else:
                 if session_status(sid) == "missing":
-                    exec_claude(["--permission-mode", "bypassPermissions"])
+                    run_claude_and_wait(["--permission-mode", "bypassPermissions"])
                 else:
-                    exec_claude(["--continue", "--permission-mode", "bypassPermissions"])
-                return 0  # unreachable on success; exec_claude exits on failure
+                    run_claude_and_wait(["--continue", "--permission-mode", "bypassPermissions"])
+                # claude already took over the screen; go straight back to the
+                # table once it exits, rather than pausing on nothing new.
+            continue
         elif action == "delete":
             choice = choose_inline(
                 "Delete just this entry, or clean up every missing entry?",

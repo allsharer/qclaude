@@ -94,7 +94,7 @@ qclaude -s 248f0e73-e6ea-4311-...    # save a specific session ID
 qclaude -l
 ```
 
-Prints all saved sessions with their status:
+Prints all saved sessions with their status, most recently used first:
 
 ```
 DIRECTORY                                                SESSION ID                            STATUS
@@ -121,24 +121,26 @@ qclaude
 qclaude -o     # identical — just the explicit form
 ```
 
-Opens a ruled table of every saved session — **Directory**, **Session ID**, **Status** (`active` / `ok` / `missing`, same meanings as `qclaude -l`) — and lets you act on the highlighted row directly:
+Opens a ruled table of every saved session — **Directory**, **Session ID**, **Status** (`active` / `ok` / `missing`, same meanings as `qclaude -l`) — sorted most-recently-used first, and lets you act on the highlighted row directly:
 
 | Key | Action |
 |-----|--------|
 | `↑`/`↓` | Move the selection |
 | `PgUp`/`PgDn` | Page up/down |
 | `Home`/`End` | Jump to the first/last entry |
+| `/` | Search — see below |
 | `Enter` | Resume the highlighted session (or start a fresh one if its Status is `missing`) |
 | `e` | Edit the highlighted session (same menu as `qclaude -e`) |
 | `d` | Delete the highlighted session, or clean up every missing one (asks which first — see below) |
 | `q` | Quit |
 
-Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers.
+Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers. The sort order (and this Status column) update live, so a session you just resumed, edited, or saved jumps straight back to the top next time the table redraws.
 
+- **Search**: `/` opens a one-line search box. Typing jumps the selection to the best-matching directory as you go (an exact substring beats a scattered/fuzzy match; `Backspace` edits and re-matches). `Enter` or `Esc` closes the box and leaves the selection where the search put it — it does **not** act on it. Press `Enter` again afterward to actually resume (or `e`/`d` as usual). While the box is open, every key you type — including `d`, `e`, and `q` — is just a search character, not a shortcut; only arrow/paging keys still navigate normally.
 - A session already active is shown as `active` in its Status column and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
 - `d` first asks **Delete** (just the highlighted entry) or **Clean missing** (every `missing`-status entry at once, same as `qclaude -d --clean`) — `←`/`→` (or `↑`/`↓`) move between them, `Enter` confirms, `q` cancels back to the table with nothing changed. **Delete** is the default.
 - `e`, and whichever choice `d` leads to, drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete, clean, or rename is reflected immediately.
-- `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. Your shell's own working directory is unchanged after you exit claude.
+- `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. **When that claude session ends, you're brought straight back to the table** (refreshed), not dropped to your shell — `q` is the only way to actually leave. Your shell's own working directory is unchanged throughout, no matter how many sessions you hop between.
 
 ---
 
@@ -219,6 +221,8 @@ Prints the full command summary (the text at the top of this README's Overview t
 Claude Code stores session files under `~/.claude/projects/<encoded-path>/` where the directory path has `/` and `.` replaced with `-`. The `save` command's auto-detect reads the most recent `.jsonl` file from that directory to find the latest session ID.
 
 Active session detection works by scanning `~/.claude/sessions/*.json` for a matching `sessionId` and confirming the recorded `pid` is still a running process.
+
+Every list of saved sessions (`list`, and the interactive table) is sorted by the mtime of each session's `.jsonl` file — most recently touched first, `missing` entries (no file at all) last — so recently- or currently-used projects always surface near the top.
 
 ## Legacy standalone scripts
 
