@@ -6,8 +6,9 @@ Usage: qclaude [command] [args...]
 
 Bare "qclaude" (no command) opens the same interactive picker as "qclaude
 -o": a table of all saved sessions where Enter resumes the highlighted one,
-e edits it, d deletes it, and q quits — the table's Status column already
-shows what "list" would, so most day-to-day use needs nothing but this.
+e edits it, d deletes it (or cleans up every missing entry, your choice),
+and q quits — the table's Status column already shows what "list" would,
+so most day-to-day use needs nothing but this.
 
 Commands (flag or word form):
   -r, resume [--resume|--continue] [claude-args...]
@@ -159,6 +160,7 @@ def find_latest_session(path):
 # ---------------------------------------------------------------------------
 
 ARROW_UP, ARROW_DOWN = b"\x1b[A", b"\x1b[B"
+ARROW_LEFT, ARROW_RIGHT = b"\x1b[D", b"\x1b[C"
 PAGE_UP, PAGE_DOWN = b"\x1b[5~", b"\x1b[6~"
 HOME_KEYS = (b"\x1b[H", b"\x1b[1~")
 END_KEYS = (b"\x1b[F", b"\x1b[4~")
@@ -339,6 +341,43 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
         sys.stdout.write("\033[?25h\n")
+        sys.stdout.flush()
+
+
+def choose_inline(question, options, default=0):
+    """A single-line left/right (or up/down) toggle between a few short
+    options, rendered in place. Returns the chosen index, or None if the
+    user cancelled (q/Esc/Ctrl-C)."""
+    fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(fd)
+    selected = default
+
+    def render():
+        parts = []
+        for i, label in enumerate(options):
+            parts.append(f"\033[7m {label} \033[0m" if i == selected else f"  {label}  ")
+        line = f"{question}  " + "".join(parts) + "  (←/→ choose, Enter confirm, q cancel)"
+        sys.stdout.write("\r\033[2K" + line)
+        sys.stdout.flush()
+
+    try:
+        tty.setraw(fd)
+        render()
+        while True:
+            key = read_key(fd)
+            if key in (ARROW_LEFT, ARROW_UP):
+                selected = (selected - 1) % len(options)
+                render()
+            elif key in (ARROW_RIGHT, ARROW_DOWN):
+                selected = (selected + 1) % len(options)
+                render()
+            elif key in ENTER_KEYS:
+                return selected
+            elif key in QUIT_KEYS:
+                return None
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+        sys.stdout.write("\r\n")
         sys.stdout.flush()
 
 
@@ -650,7 +689,16 @@ def cmd_open(args):
                     exec_claude(["--continue", "--permission-mode", "bypassPermissions"])
                 return 0  # unreachable on success; exec_claude exits on failure
         elif action == "delete":
-            do_delete(db, path, sid)
+            choice = choose_inline(
+                "Delete just this entry, or clean up every missing entry?",
+                ["Delete", "Clean missing"],
+            )
+            if choice is None:
+                continue
+            if choice == 0:
+                do_delete(db, path, sid)
+            else:
+                cmd_delete_clean()
         elif action == "edit":
             do_edit(db, path, sid)
         input("\nPress Enter to return to the list... ")

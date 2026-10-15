@@ -130,13 +130,14 @@ Opens a ruled table of every saved session — **Directory**, **Session ID**, **
 | `Home`/`End` | Jump to the first/last entry |
 | `Enter` | Resume the highlighted session (or start a fresh one if its Status is `missing`) |
 | `e` | Edit the highlighted session (same menu as `qclaude -e`) |
-| `d` | Delete the highlighted session (same confirmation as `qclaude -d`) |
+| `d` | Delete the highlighted session, or clean up every missing one (asks which first — see below) |
 | `q` | Quit |
 
 Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers.
 
 - A session already active is shown as `active` in its Status column and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
-- `e` and `d` drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete or a rename is reflected immediately.
+- `d` first asks **Delete** (just the highlighted entry) or **Clean missing** (every `missing`-status entry at once, same as `qclaude -d --clean`) — `←`/`→` (or `↑`/`↓`) move between them, `Enter` confirms, `q` cancels back to the table with nothing changed. **Delete** is the default.
+- `e`, and whichever choice `d` leads to, drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete, clean, or rename is reflected immediately.
 - `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. Your shell's own working directory is unchanged after you exit claude.
 
 ---
