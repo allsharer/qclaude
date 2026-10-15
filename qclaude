@@ -33,6 +33,7 @@ import signal
 import subprocess
 import sys
 import termios
+import time
 import tty
 from pathlib import Path
 
@@ -145,6 +146,17 @@ def session_status(sid):
     if has_session_file(sid):
         return "ok"
     return "missing"
+
+
+def last_used_text(sid):
+    """Days elapsed since this session's .jsonl was last modified, as
+    "today" or "<N>d ago" — or "—" if there's no session file to measure
+    (status "missing")."""
+    mtime = session_mtime(sid)
+    if mtime is None:
+        return "—"
+    days = int((time.time() - mtime) // 86400)
+    return "today" if days == 0 else f"{days}d ago"
 
 
 def find_project_dir(path, sid=None):
@@ -311,9 +323,9 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         end = min(top + page, total)
 
         term_w = shutil.get_terminal_size(fallback=(80, 24)).columns
-        sid_w, status_w = 36, 7
-        path_w = max(20, term_w - sid_w - status_w - 10)
-        widths = [path_w, sid_w, status_w]
+        sid_w, status_w, last_w = 36, 7, 9
+        path_w = max(20, term_w - sid_w - status_w - last_w - 13)
+        widths = [path_w, sid_w, status_w, last_w]
 
         out = []
         if redraw:
@@ -321,12 +333,13 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         out.append(f"{prompt}\r\n\r\n")
         out.append(f"\033[2m  ↑ {top} more above\033[0m\r\n" if top > 0 else "\r\n")
         out.append(_hline(widths, BOX_TL, BOX_TM, BOX_TR) + "\r\n")
-        out.append(_row(["Directory", "Session ID", "Status"], widths) + "\r\n")
+        out.append(_row(["Directory", "Session ID", "Status", "Last Used"], widths) + "\r\n")
         out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         for i in range(top, end):
             path, sid = entries[i]
             status_text = session_status(sid)
-            out.append(_row([path, sid, status_text], widths, reverse=(i == selected)) + "\r\n")
+            last_text = last_used_text(sid)
+            out.append(_row([path, sid, status_text, last_text], widths, reverse=(i == selected)) + "\r\n")
             if i != end - 1:
                 out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         out.append(_hline(widths, BOX_BL, BOX_BM, BOX_BR) + "\r\n")

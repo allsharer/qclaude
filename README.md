@@ -121,7 +121,7 @@ qclaude
 qclaude -o     # identical — just the explicit form
 ```
 
-Opens a ruled table of every saved session — **Directory**, **Session ID**, **Status** (`active` / `ok` / `missing`, same meanings as `qclaude -l`) — sorted most-recently-used first, and lets you act on the highlighted row directly:
+Opens a ruled table of every saved session — **Directory**, **Session ID**, **Status** (`active` / `ok` / `missing`, same meanings as `qclaude -l`), **Last Used** (`today`, `3d ago`, ..., or `—` if the session file is gone) — sorted most-recently-used first, and lets you act on the highlighted row directly:
 
 | Key | Action |
 |-----|--------|
