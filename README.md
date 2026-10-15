@@ -224,13 +224,7 @@ Active session detection works by scanning `~/.claude/sessions/*.json` for a mat
 
 Every list of saved sessions (`list`, and the interactive table) is sorted by the mtime of each session's `.jsonl` file — most recently touched first, `missing` entries (no file at all) last — so recently- or currently-used projects always surface near the top.
 
-## Legacy standalone scripts
-
-`oclaude`, `sclaude`, `rclaude`, `lclaude`, `eclaude`, and `dclaude` — the original six standalone scripts `qclaude` replaces — remain in this repo unchanged and still work exactly as before. `qclaude` is the maintained, recommended entry point going forward; the six scripts have no planned removal date but are no longer being developed.
-
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) CLI (`claude`)
 - Python 3.8+ (stdlib only — no third-party packages)
-
-The legacy standalone scripts additionally require bash 4+ and `awk`, `find`, `grep`, `python3`, `sed`, `tput`.

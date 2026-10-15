@@ -22,9 +22,7 @@ Commands (flag or word form):
   -d, delete [--clean]                  Delete a session, or bulk-remove missing ones
   -h, --help                            Show this help
 
-This is a single-file replacement for the original six standalone scripts
-(oclaude, sclaude, rclaude, lclaude, eclaude, dclaude), which remain in this
-repo unchanged. See README.md for full documentation of each command.
+See README.md for full documentation of each command.
 """
 
 import json
