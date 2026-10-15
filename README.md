@@ -128,7 +128,7 @@ Opens a ruled table of every saved session — **Directory**, **Session ID**, **
 | `↑`/`↓` | Move the selection |
 | `PgUp`/`PgDn` | Page up/down |
 | `Home`/`End` | Jump to the first/last entry |
-| `Enter` | Resume the highlighted session |
+| `Enter` | Resume the highlighted session (or start a fresh one if its Status is `missing`) |
 | `e` | Edit the highlighted session (same menu as `qclaude -e`) |
 | `d` | Delete the highlighted session (same confirmation as `qclaude -d`) |
 | `q` | Quit |
@@ -137,7 +137,7 @@ Long lists scroll within a viewport that follows the selection, with "↑ N more
 
 - A session already active is shown as `active` in its Status column and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
 - `e` and `d` drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete or a rename is reflected immediately.
-- `Enter` resumes Claude Code in `--permission-mode acceptEdits`, cd'd into that session's directory. Your shell's own working directory is unchanged after you exit claude.
+- `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. Your shell's own working directory is unchanged after you exit claude.
 
 ---
 

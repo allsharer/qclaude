@@ -117,6 +117,17 @@ def has_session_file(sid):
     return next(projects.glob(f"*/{sid}.jsonl"), None) is not None
 
 
+def session_status(sid):
+    """One of "active" / "ok" / "missing", plain text (no color) — the
+    single source of truth for the three-state status shown by `list` and
+    the interactive table."""
+    if is_active(sid):
+        return "active"
+    if has_session_file(sid):
+        return "ok"
+    return "missing"
+
+
 def find_project_dir(path, sid=None):
     """Locate the project dir by encoded path, falling back to a search by
     session ID for cases where the project dir doesn't match the path's
@@ -268,12 +279,7 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         for i in range(top, end):
             path, sid = entries[i]
-            if is_active(sid):
-                status_text = "active"
-            elif has_session_file(sid):
-                status_text = "ok"
-            else:
-                status_text = "missing"
+            status_text = session_status(sid)
             out.append(_row([path, sid, status_text], widths, reverse=(i == selected)) + "\r\n")
             if i != end - 1:
                 out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
@@ -595,12 +601,9 @@ def cmd_list(args):
     print(f"{'DIRECTORY':<55}  {'SESSION ID':<36}  STATUS")
     print(f"{'---------':<55}  {'----------':<36}  ------")
     for path, sid in db:
-        if is_active(sid):
+        status = session_status(sid)
+        if status == "active":
             status = "\033[1;32mactive\033[0m"
-        elif has_session_file(sid):
-            status = "ok"
-        else:
-            status = "missing"
         if path == cwd:
             status += " *"
         print(f"{path:<55}  {sid:<36}  {status}")
@@ -637,7 +640,10 @@ def cmd_open(args):
 
         if action == "select":
             os.chdir(path)
-            exec_claude(["--continue", "--permission-mode", "acceptEdits"])
+            if session_status(sid) == "missing":
+                exec_claude(["--permission-mode", "bypassPermissions"])
+            else:
+                exec_claude(["--continue", "--permission-mode", "bypassPermissions"])
             return 0  # unreachable on success; exec_claude exits on failure
 
         if action == "delete":
