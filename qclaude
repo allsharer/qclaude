@@ -639,14 +639,17 @@ def cmd_open(args):
         action, path, sid = result
 
         if action == "select":
-            os.chdir(path)
-            if session_status(sid) == "missing":
-                exec_claude(["--permission-mode", "bypassPermissions"])
+            try:
+                os.chdir(path)
+            except OSError as e:
+                print(f"\033[1;31mError: can't switch to {path}: {e.strerror}\033[0m")
             else:
-                exec_claude(["--continue", "--permission-mode", "bypassPermissions"])
-            return 0  # unreachable on success; exec_claude exits on failure
-
-        if action == "delete":
+                if session_status(sid) == "missing":
+                    exec_claude(["--permission-mode", "bypassPermissions"])
+                else:
+                    exec_claude(["--continue", "--permission-mode", "bypassPermissions"])
+                return 0  # unreachable on success; exec_claude exits on failure
+        elif action == "delete":
             do_delete(db, path, sid)
         elif action == "edit":
             do_edit(db, path, sid)
