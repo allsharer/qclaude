@@ -29,6 +29,7 @@ import json
 import os
 import select
 import shutil
+import signal
 import subprocess
 import sys
 import termios
@@ -341,6 +342,10 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         sys.stdout.write("".join(out))
         sys.stdout.flush()
 
+    def on_resize(_signum, _frame):
+        draw(True)
+
+    old_winch = signal.signal(signal.SIGWINCH, on_resize)
     try:
         tty.setraw(fd)
         sys.stdout.write("\033[2J\033[H\033[?25l")
@@ -410,6 +415,7 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
             elif key in QUIT_KEYS:
                 return None
     finally:
+        signal.signal(signal.SIGWINCH, old_winch)
         termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
         sys.stdout.write("\033[?25h\n")
         sys.stdout.flush()
