@@ -6,7 +6,7 @@ Usage: qclaude [command] [args...]
 
 Bare "qclaude" (no command) opens the same interactive picker as "qclaude
 -o": a table of all saved sessions where Enter resumes the highlighted one,
-e edits it, d deletes it, and q quits — the table's Active column already
+e edits it, d deletes it, and q quits — the table's Status column already
 shows what "list" would, so most day-to-day use needs nothing but this.
 
 Commands (flag or word form):
@@ -206,7 +206,7 @@ DEFAULT_HINT = "↑/↓ move   PgUp/PgDn page   Home/End jump   Enter select   q
 
 def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAULT_HINT):
     """Interactive list picker over (path, sid) entries, rendered as a ruled
-    table (Directory / Session ID / Active).
+    table (Directory / Session ID / Status).
 
     With no `extra_actions`, returns the selected (path, sid) on Enter, or
     None if the user quit — this is the plain single-purpose picker used by
@@ -254,9 +254,9 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         end = min(top + page, total)
 
         term_w = shutil.get_terminal_size(fallback=(80, 24)).columns
-        sid_w, active_w = 36, 6
-        path_w = max(20, term_w - sid_w - active_w - 10)
-        widths = [path_w, sid_w, active_w]
+        sid_w, status_w = 36, 7
+        path_w = max(20, term_w - sid_w - status_w - 10)
+        widths = [path_w, sid_w, status_w]
 
         out = []
         if redraw:
@@ -264,12 +264,17 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         out.append(f"{prompt}\r\n\r\n")
         out.append(f"\033[2m  ↑ {top} more above\033[0m\r\n" if top > 0 else "\r\n")
         out.append(_hline(widths, BOX_TL, BOX_TM, BOX_TR) + "\r\n")
-        out.append(_row(["Directory", "Session ID", "Active"], widths) + "\r\n")
+        out.append(_row(["Directory", "Session ID", "Status"], widths) + "\r\n")
         out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         for i in range(top, end):
             path, sid = entries[i]
-            active_text = "ACTIVE" if is_active(sid) else ""
-            out.append(_row([path, sid, active_text], widths, reverse=(i == selected)) + "\r\n")
+            if is_active(sid):
+                status_text = "active"
+            elif has_session_file(sid):
+                status_text = "ok"
+            else:
+                status_text = "missing"
+            out.append(_row([path, sid, status_text], widths, reverse=(i == selected)) + "\r\n")
             if i != end - 1:
                 out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         out.append(_hline(widths, BOX_BL, BOX_BM, BOX_BR) + "\r\n")

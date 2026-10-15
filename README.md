@@ -13,7 +13,7 @@ Running `qclaude` with no arguments opens an interactive table of every saved se
 | — | (bare `qclaude`) | Open the interactive table — resume/edit/delete from one view |
 | `qclaude resume` | `-r` | Resume the saved session for the current directory directly, no table |
 | `qclaude save` | `-s` | Save a session for the current directory |
-| `qclaude list` | `-l` | List all saved sessions (non-interactive; the table's Active column already shows this) |
+| `qclaude list` | `-l` | List all saved sessions (non-interactive; the table's Status column already shows this) |
 | `qclaude open` | `-o` | Same interactive table as bare `qclaude` |
 | `qclaude edit` | `-e` | Edit session ID, or move/merge a directory (updates all Claude metadata) |
 | `qclaude delete` | `-d` | Delete a saved session, or bulk-remove stale ones |
@@ -121,7 +121,7 @@ qclaude
 qclaude -o     # identical — just the explicit form
 ```
 
-Opens a ruled table of every saved session — **Directory**, **Session ID**, **Active** — and lets you act on the highlighted row directly:
+Opens a ruled table of every saved session — **Directory**, **Session ID**, **Status** (`active` / `ok` / `missing`, same meanings as `qclaude -l`) — and lets you act on the highlighted row directly:
 
 | Key | Action |
 |-----|--------|
@@ -135,7 +135,7 @@ Opens a ruled table of every saved session — **Directory**, **Session ID**, **
 
 Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers.
 
-- A session already active is shown with `ACTIVE` in its row and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
+- A session already active is shown as `active` in its Status column and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
 - `e` and `d` drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete or a rename is reflected immediately.
 - `Enter` resumes Claude Code in `--permission-mode acceptEdits`, cd'd into that session's directory. Your shell's own working directory is unchanged after you exit claude.
 
