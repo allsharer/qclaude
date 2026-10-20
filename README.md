@@ -6,15 +6,15 @@ A single command for saving and resuming [Claude Code](https://claude.ai/code) s
 
 Claude Code sessions are ephemeral by default. `qclaude` lets you save a session ID against a directory, resume it later, and manage saved sessions from the command line — all through one tool, dispatched by command.
 
-Running `qclaude` with no arguments opens an interactive table of every saved session, and most day-to-day work happens right there: `Enter` resumes the highlighted one, `e` edits it, `d` deletes it — no need to `cd` into the directory first or remember a separate command for each. The individual commands below still exist for direct, scriptable, single-purpose use.
+Running `qclaude` with no arguments opens an interactive table of every saved session, and most day-to-day work happens right there: `Enter` resumes the highlighted one, `o` starts a brand-new session for it instead, `e` edits it, `d` deletes it, `n` creates a new project directory — no need to `cd` into the directory first or remember a separate command for each. The individual commands below still exist for direct, scriptable, single-purpose use.
 
 | Command | Flag | Purpose |
 |---------|------|---------|
-| — | (bare `qclaude`) | Open the interactive table — resume/edit/delete from one view |
+| — | (bare `qclaude`) | Open the interactive table — resume/open/edit/delete/new from one view |
 | `qclaude resume` | `-r` | Resume the saved session for the current directory directly, no table |
+| `qclaude open` | `-o` | Start a brand-new session for the current directory, no table |
 | `qclaude save` | `-s` | Save a session for the current directory |
 | `qclaude list` | `-l` | List all saved sessions (non-interactive; the table's Status column already shows this) |
-| `qclaude open` | `-o` | Same interactive table as bare `qclaude` |
 | `qclaude edit` | `-e` | Edit session ID, or move/merge a directory (updates all Claude metadata) |
 | `qclaude delete` | `-d` | Delete a saved session, or bulk-remove stale ones |
 | — | `-h`, `--help` | Show usage |
@@ -26,7 +26,7 @@ Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per lin
 ## Quick start
 
 ```bash
-qclaude          # open the table: Enter resumes, e edits, d deletes
+qclaude          # open the table: Enter resumes, o opens fresh, e edits, d deletes, n creates a project
 ```
 
 ## Installation
@@ -66,6 +66,16 @@ qclaude -r --resume
 qclaude -r --continue
 qclaude -r --model claude-opus-4-5
 ```
+
+---
+
+### `qclaude -o` / `qclaude open` — start a brand-new session
+
+```bash
+qclaude -o [extra claude args...]
+```
+
+Always starts a fresh `claude --permission-mode bypassPermissions` session in the current directory — the equivalent of running plain `claude` yourself, ignoring whatever is or isn't saved for this directory. Any extra arguments are passed through to `claude`. (This is a direct, no-table shortcut — the table's own `o` key does the same thing for whichever row is highlighted, then asks whether to save the result; see below.)
 
 ---
 
@@ -114,11 +124,10 @@ DIRECTORY                                                SESSION ID             
 
 ---
 
-### `qclaude` / `qclaude -o` / `qclaude open` — the interactive table
+### `qclaude` — the interactive table
 
 ```bash
 qclaude
-qclaude -o     # identical — just the explicit form
 ```
 
 Opens a ruled table of every saved session — **Directory**, **Session ID**, **Status** (`active` / `ok` / `missing`, same meanings as `qclaude -l`), **Last Used** (`today`, `3d ago`, ..., or `—` if the session file is gone) — sorted most-recently-used first, and lets you act on the highlighted row directly:
@@ -130,17 +139,21 @@ Opens a ruled table of every saved session — **Directory**, **Session ID**, **
 | `Home`/`End` | Jump to the first/last entry |
 | `/` | Search — see below |
 | `Enter` | Resume the highlighted session (or start a fresh one if its Status is `missing`) |
+| `o` | Start a brand-new session for the highlighted entry instead of resuming it |
 | `e` | Edit the highlighted session (same menu as `qclaude -e`) |
 | `d` | Delete the highlighted session, or clean up every missing one (asks which first — see below) |
+| `n` | Create a new project directory under `~/workspace` — see below |
 | `q` | Quit |
 
 Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers. The sort order (and this Status column) update live, so a session you just resumed, edited, or saved jumps straight back to the top next time the table redraws.
 
-- **Search**: `/` opens a one-line search box. Typing jumps the selection to the best-matching directory as you go (an exact substring beats a scattered/fuzzy match; `Backspace` edits and re-matches). `Enter` or `Esc` closes the box and leaves the selection where the search put it — it does **not** act on it. Press `Enter` again afterward to actually resume (or `e`/`d` as usual). While the box is open, every key you type — including `d`, `e`, and `q` — is just a search character, not a shortcut; only arrow/paging keys still navigate normally.
-- A session already active is shown as `active` in its Status column and can't be resumed from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
+- **Search**: `/` opens a one-line search box. Typing jumps the selection to the best-matching directory as you go (an exact substring beats a scattered/fuzzy match; `Backspace` edits and re-matches). `Enter` or `Esc` closes the box and leaves the selection where the search put it — it does **not** act on it. Press `Enter` again afterward to actually resume (or `o`/`e`/`d`/`n` as usual). While the box is open, every key you type — including `o`, `d`, `e`, `n`, and `q` — is just a search character, not a shortcut; only arrow/paging keys still navigate normally.
+- A session already active is shown as `active` in its Status column and can't be resumed or re-opened from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
 - `d` first asks **Delete** (just the highlighted entry) or **Clean missing** (every `missing`-status entry at once, same as `qclaude -d --clean`) — `←`/`→` (or `↑`/`↓`) move between them, `Enter` confirms, `q` cancels back to the table with nothing changed. **Delete** is the default.
-- `e`, and whichever choice `d` leads to, drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete, clean, or rename is reflected immediately.
-- `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. **When that claude session ends, you're brought straight back to the table** (refreshed), not dropped to your shell — `q` is the only way to actually leave. Your shell's own working directory is unchanged throughout, no matter how many sessions you hop between.
+- `e`, `n`, and whichever choice `d` leads to, drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete, clean, rename, or new project is reflected immediately.
+- `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. In that `missing` case, once that fresh session ends, **the new session it created is saved automatically** (no prompt — there was nothing worth keeping before). **When the claude session ends, you're brought straight back to the table** (refreshed), not dropped to your shell — `q` is the only way to actually leave. Your shell's own working directory is unchanged throughout, no matter how many sessions you hop between.
+- `o` cd's into the highlighted entry's directory and always starts a **brand-new** `claude --permission-mode bypassPermissions` session there — regardless of that entry's Status, and without resuming/continuing anything. When it ends, you're asked `Save this session? [y/N]` — answering yes points that directory's saved entry at the new session (replacing whatever was saved before); answering no (or just pressing `Enter`) leaves the database untouched, so the session you just had is left untracked.
+- `n` asks for a new project name, creates it as a subdirectory of `~/workspace`, and offers to open it. A plain name has its words joined into camelCase (`church files` → `~/workspace/churchFiles`); a name containing `/` is treated as an already-formed nested path, where every segment after a `/` must already be space-free (`churchFiles/accountingYouth` → `~/workspace/churchFiles/accountingYouth`, but `churchFiles/accounting youth` is rejected). Creation is refused outright if the target directory already exists. If you choose to open it (`Open this directory now? [Y/n]`, default yes), the resulting session is saved automatically — no prompt, since a just-created directory has nothing to overwrite.
 
 ---
 

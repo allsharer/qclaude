@@ -4,20 +4,23 @@ working directory, from one tool.
 
 Usage: qclaude [command] [args...]
 
-Bare "qclaude" (no command) opens the same interactive picker as "qclaude
--o": a table of all saved sessions, most recently used first, where /
-searches, Enter resumes the highlighted one (returning to the table once
-that claude session ends), e edits it, d deletes it (or cleans up every
-missing entry, your choice), and q quits — the table's Status column
-already shows what "list" would, so most day-to-day use needs nothing but
-this.
+Bare "qclaude" (no command) opens an interactive table of all saved
+sessions, most recently used first, where / searches, Enter resumes the
+highlighted one (returning to the table once that claude session ends), o
+starts a brand-new session for it instead (asking afterward whether to save
+it over the old one), e edits it, d deletes it (or cleans up every missing
+entry, your choice), n creates a new project directory under ~/workspace
+and optionally opens it, and q quits — the table's Status column already
+shows what "list" would, so most day-to-day use needs nothing but this.
 
 Commands (flag or word form):
   -r, resume [--resume|--continue] [claude-args...]
                                          Resume the saved session for $PWD
+  -o, open [claude-args...]             Start a brand-new session for $PWD
+                                         (same as plain "claude"), ignoring
+                                         any saved session
   -s, save [session-id]                 Save the current directory's session
   -l, list                              List all saved sessions
-  -o, open                              Interactive picker (same as bare qclaude)
   -e, edit [--move <src> <dst>]         Edit a session entry, or move a directory
   -d, delete [--clean]                  Delete a session, or bulk-remove missing ones
   -h, --help                            Show this help
@@ -83,6 +86,20 @@ def find_entry(entries, path):
 
 def sid_exists(entries, sid):
     return any(s == sid for _, s in entries)
+
+
+def save_entry(db, path, sid):
+    """Point path's row in db at sid (inserting one if path has none yet)
+    and write it out — the common "save this session for this directory"
+    step used by `save` itself and by the table's fresh-session flows
+    (new/open, and auto-saving a resumed-from-missing session)."""
+    for i, (p, _) in enumerate(db):
+        if p == path:
+            db[i] = (path, sid)
+            break
+    else:
+        db.append((path, sid))
+    write_db(db)
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +713,16 @@ def cmd_resume(args):
 
 
 # ---------------------------------------------------------------------------
+# open (-o) — always a brand-new session, ignoring any saved one for $PWD
+# ---------------------------------------------------------------------------
+
+def cmd_open(args):
+    cwd = os.getcwd()
+    print(f"Starting a new session in {cwd}")
+    exec_claude(["--permission-mode", "bypassPermissions", *args])
+
+
+# ---------------------------------------------------------------------------
 # save (-s)
 # ---------------------------------------------------------------------------
 
@@ -715,13 +742,7 @@ def cmd_save(args):
         print(f"Session {sid} is already saved — skipping.", file=sys.stderr)
         return 0
 
-    for i, (p, _) in enumerate(db):
-        if p == cwd:
-            db[i] = (cwd, sid)
-            break
-    else:
-        db.append((cwd, sid))
-    write_db(db)
+    save_entry(db, cwd, sid)
     print(f"Saved session {sid} for {cwd}")
     return 0
 
@@ -752,14 +773,95 @@ def cmd_list(args):
 
 
 # ---------------------------------------------------------------------------
-# open (-o, and bare "qclaude" with no arguments)
+# action table (bare "qclaude" with no arguments)
 # ---------------------------------------------------------------------------
 
-OPEN_EXTRA_ACTIONS = {b"d": "delete", b"D": "delete", b"e": "edit", b"E": "edit"}
-OPEN_HINT = "↑/↓ move   PgUp/PgDn   Home/End   / search   Enter resume   e edit   d delete   q quit"
+def build_new_project_path(name):
+    """Resolve a '-n' name into a path relative to ~/workspace, or
+    (None, error) if it's invalid.
+
+    A plain name with no "/" gets its whitespace-separated words joined
+    into one camelCase directory name ("church files" -> "churchFiles").
+    A name containing "/" is instead treated as an already-formed
+    multi-segment path — each segment must already be space-free (no
+    auto-camelCasing across a slash); this lets you nest a new directory
+    under an existing one ("churchFiles/accountingYouth") without the tool
+    guessing how to merge spaces across segments."""
+    name = name.strip()
+    if not name:
+        return None, "Name cannot be empty."
+    if "/" not in name:
+        words = name.split()
+        component = words[0] + "".join(w[0].upper() + w[1:] for w in words[1:])
+        return Path(component), None
+    segments = [seg.strip() for seg in name.split("/")]
+    for seg in segments:
+        if not seg or seg in (".", ".."):
+            return None, f"\"{seg}\" is not a valid directory name."
+        if " " in seg:
+            return None, (
+                f"\"{seg}\" has a space — only a single, slash-free name is "
+                "auto-camelCased; a multi-segment path must already be valid "
+                "directory names."
+            )
+    return Path(*segments), None
 
 
-def cmd_open(args):
+def prompt_new_project():
+    """'n' in the action table: ask for a name, create it as a new
+    subdirectory of ~/workspace (see build_new_project_path for the naming
+    rules), then offer to open a brand-new claude session there — saving
+    that session automatically (no prompt) if so, since the directory is
+    necessarily untracked before this."""
+    name = input("New project name: ")
+    if not name.strip():
+        print("Aborted.")
+        return
+
+    rel, error = build_new_project_path(name)
+    if error:
+        print(f"\033[1;31m{error}\033[0m")
+        return
+
+    target = Path.home() / "workspace" / rel
+    if target.exists():
+        print(f"\033[1;31mAlready exists: {target}\033[0m")
+        return
+
+    try:
+        target.mkdir(parents=True)
+    except OSError as e:
+        print(f"\033[1;31mCan't create {target}: {e.strerror}\033[0m")
+        return
+    print(f"Created {target}")
+
+    answer = input("Open this directory now? [Y/n] ")
+    if answer.strip().lower() in ("n", "no"):
+        return
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(target)
+        run_claude_and_wait(["--permission-mode", "bypassPermissions"])
+    finally:
+        os.chdir(cwd)
+
+    new_sid = find_latest_session(str(target))
+    if new_sid:
+        save_entry(load_db(), str(target), new_sid)
+        print(f"Saved session {new_sid} for {target}")
+
+
+TABLE_EXTRA_ACTIONS = {
+    b"o": "open", b"O": "open",
+    b"e": "edit", b"E": "edit",
+    b"d": "delete", b"D": "delete",
+    b"n": "new", b"N": "new",
+}
+TABLE_HINT = "↑/↓ move   / search   Enter resume   o open   e edit   d delete   n new   q quit"
+
+
+def action_table(args):
     while True:
         db = load_db()
         if not db:
@@ -771,7 +873,7 @@ def cmd_open(args):
 
         result = run_picker(
             "Saved sessions:", db, blocked,
-            extra_actions=OPEN_EXTRA_ACTIONS, hint=OPEN_HINT,
+            extra_actions=TABLE_EXTRA_ACTIONS, hint=TABLE_HINT,
         )
         if result is None:
             return 0
@@ -786,11 +888,29 @@ def cmd_open(args):
             else:
                 if session_status(sid) == "missing":
                     run_claude_and_wait(["--permission-mode", "bypassPermissions"])
+                    new_sid = find_latest_session(path)
+                    if new_sid:
+                        save_entry(load_db(), path, new_sid)
+                        print(f"Saved session {new_sid} for {path}")
+                        input("\nPress Enter to return to the list... ")
                 else:
                     run_claude_and_wait(["--continue", "--permission-mode", "bypassPermissions"])
                 # claude already took over the screen; go straight back to the
                 # table once it exits, rather than pausing on nothing new.
             continue
+        elif action == "open":
+            try:
+                os.chdir(path)
+            except OSError as e:
+                print(f"\033[1;31mError: can't switch to {path}: {e.strerror}\033[0m")
+            else:
+                run_claude_and_wait(["--permission-mode", "bypassPermissions"])
+                new_sid = find_latest_session(path)
+                if new_sid:
+                    answer = input("Save this session? [y/N] ")
+                    if answer.strip().lower() in ("y", "yes"):
+                        save_entry(load_db(), path, new_sid)
+                        print(f"Saved session {new_sid} for {path}")
         elif action == "delete":
             choice = choose_inline(
                 "Delete just this entry, or clean up every missing entry?",
@@ -804,6 +924,8 @@ def cmd_open(args):
                 cmd_delete_clean()
         elif action == "edit":
             do_edit(db, path, sid)
+        elif action == "new":
+            prompt_new_project()
         input("\nPress Enter to return to the list... ")
 
 
@@ -1017,7 +1139,7 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
 
     if not argv:
-        return cmd_open([])
+        return action_table([])
 
     first, rest = argv[0], argv[1:]
     if first in ("-h", "--help"):
