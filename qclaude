@@ -154,13 +154,18 @@ def session_mtime(sid):
     return found.stat().st_mtime if found else None
 
 
-def session_status(sid):
+def session_status(path, sid):
     """One of "active" / "ok" / "missing", plain text (no color) — the
-    single source of truth for the three-state status shown by `list` and
-    the interactive table."""
+    single source of truth for the three-state status shown by `list`,
+    `delete --clean`, and the interactive table.
+
+    "missing" covers both a deleted session file and a directory that no
+    longer exists on disk (e.g. removed by hand instead of through
+    `qclaude -d`) — either way there's nothing left to resume into, so the
+    entry is only good for `-d --clean` to sweep away."""
     if is_active(sid):
         return "active"
-    if has_session_file(sid):
+    if has_session_file(sid) and Path(path).is_dir():
         return "ok"
     return "missing"
 
@@ -354,7 +359,7 @@ def run_picker(prompt, entries, blocked_msg=None, extra_actions=None, hint=DEFAU
         out.append(_hline(widths, BOX_ML, BOX_MM, BOX_MR) + "\r\n")
         for i in range(top, end):
             path, sid = entries[i]
-            status_text = session_status(sid)
+            status_text = session_status(path, sid)
             last_text = last_used_text(sid)
             out.append(_row([path, sid, status_text, last_text], widths, reverse=(i == selected)) + "\r\n")
             if i != end - 1:
@@ -761,7 +766,7 @@ def cmd_list(args):
     print(f"{'DIRECTORY':<55}  {'SESSION ID':<36}  STATUS")
     print(f"{'---------':<55}  {'----------':<36}  ------")
     for path, sid in db:
-        status = session_status(sid)
+        status = session_status(path, sid)
         if status == "active":
             status = "\033[1;32mactive\033[0m"
         if path == cwd:
@@ -886,7 +891,7 @@ def action_table(args):
                 print(f"\033[1;31mError: can't switch to {path}: {e.strerror}\033[0m")
                 input("\nPress Enter to return to the list... ")
             else:
-                if session_status(sid) == "missing":
+                if session_status(path, sid) == "missing":
                     run_claude_and_wait(["--permission-mode", "bypassPermissions"])
                     new_sid = find_latest_session(path)
                     if new_sid:
@@ -961,7 +966,7 @@ def cmd_delete_clean():
         print("No saved sessions.", file=sys.stderr)
         return 1
 
-    missing = [(p, s) for p, s in db if not is_active(s) and not has_session_file(s)]
+    missing = [(p, s) for p, s in db if session_status(p, s) == "missing"]
     if not missing:
         print("No missing sessions to clean.")
         return 0
@@ -978,7 +983,17 @@ def cmd_delete_clean():
 
     missing_paths = {p for p, _ in missing}
     write_db([(p, s) for p, s in db if p not in missing_paths])
+
+    leftover = 0
+    for p, s in missing:
+        proj = find_project_dir(p, s)
+        if proj:
+            shutil.rmtree(proj, ignore_errors=True)
+            leftover += 1
+
     print(f"Removed {len(missing)} entries from the database.")
+    if leftover:
+        print(f"Also removed {leftover} leftover ~/.claude/projects director{'y' if leftover == 1 else 'ies'} (session file present, but the project directory was already gone).")
     return 0
 
 

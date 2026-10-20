@@ -120,7 +120,7 @@ DIRECTORY                                                SESSION ID             
 |--------|---------|
 | `active` | A Claude Code process for this session is currently running |
 | `ok` | Session file exists on disk, not currently active |
-| `missing` | Session file not found (deleted outside of `qclaude -d`) |
+| `missing` | Session file not found, or its project directory no longer exists (either one deleted outside of `qclaude -d`) |
 
 ---
 
@@ -217,7 +217,7 @@ On confirmation, `qclaude -d` removes the database entry **and** deletes the ent
 qclaude -d --clean
 ```
 
-Removes every database entry whose status is `missing` (see `qclaude -l`) in one pass. Lists the sessions to be removed, asks for a single confirmation, then rewrites the database — active and `ok` sessions are left untouched, and since there's no project directory to match a missing session, only the database entry is removed.
+Removes every database entry whose status is `missing` (see `qclaude -l`) in one pass. Lists the sessions to be removed, asks for a single confirmation, then rewrites the database — active and `ok` sessions are left untouched. Usually there's no project directory to match a missing session, so only the database entry is removed; if a session file does still exist (e.g. the working directory was deleted by hand but `~/.claude/projects/` metadata wasn't), that leftover directory is removed too.
 
 ---
 
@@ -235,7 +235,7 @@ Claude Code stores session files under `~/.claude/projects/<encoded-path>/` wher
 
 Active session detection works by scanning `~/.claude/sessions/*.json` for a matching `sessionId` and confirming the recorded `pid` is still a running process.
 
-Every list of saved sessions (`list`, and the interactive table) is sorted by the mtime of each session's `.jsonl` file — most recently touched first, `missing` entries (no file at all) last — so recently- or currently-used projects always surface near the top.
+Every list of saved sessions (`list`, and the interactive table) is sorted by the mtime of each session's `.jsonl` file — most recently touched first, entries with no session file at all sink to the bottom — so recently- or currently-used projects always surface near the top. A `missing` entry whose session file still exists (only its working directory was deleted by hand) sorts by that file's real mtime like any other entry, rather than sinking to the bottom.
 
 ## Requirements
 
