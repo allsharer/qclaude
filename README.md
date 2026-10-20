@@ -6,7 +6,7 @@ A single command for saving and resuming [Claude Code](https://claude.ai/code) s
 
 Claude Code sessions are ephemeral by default. `qclaude` lets you save a session ID against a directory, resume it later, and manage saved sessions from the command line — all through one tool, dispatched by command.
 
-Running `qclaude` with no arguments opens an interactive table of every saved session, and most day-to-day work happens right there: `Enter` resumes the highlighted one, `o` starts a brand-new session for it instead, `e` edits it, `d` deletes it, `n` creates a new project directory — no need to `cd` into the directory first or remember a separate command for each. The individual commands below still exist for direct, scriptable, single-purpose use.
+Running `qclaude` with no arguments opens an interactive table of every saved session, and most day-to-day work happens right there: `Enter` resumes the highlighted one, `o` starts a brand-new session for it instead, `g` drops you into its directory without starting a session, `e` edits it, `d` deletes it, `n` creates a new project directory — no need to `cd` into the directory first or remember a separate command for each. The individual commands below still exist for direct, scriptable, single-purpose use.
 
 | Command | Flag | Purpose |
 |---------|------|---------|
@@ -26,7 +26,7 @@ Sessions are stored in `claude-sessions.db` (one `path|session-id` entry per lin
 ## Quick start
 
 ```bash
-qclaude          # open the table: Enter resumes, o opens fresh, e edits, d deletes, n creates a project
+qclaude          # open the table: Enter resumes, o opens fresh, g goes there, e edits, d deletes, n creates a project
 ```
 
 ## Installation
@@ -41,6 +41,25 @@ ln -s "$PWD/qclaude" ~/bin/qclaude
 ```
 
 Adjust the target directory (`~/bin`) to any directory already on your `$PATH`.
+
+### Optional: enable `g` (goto) in the interactive table
+
+A child process (like `qclaude`) can't change its parent shell's working directory on its own — so for the table's `g` key to actually leave your shell sitting in the chosen directory after you exit, wrap `qclaude` in a shell function that `cd`s there afterward. Add this to your `~/.bashrc` / `~/.zshrc`:
+
+```bash
+qclaude() {
+    QCLAUDE_GOTO_WRAPPED=1 command qclaude "$@"
+    local __qclaude_goto="${TMPDIR:-/tmp}/qclaude-goto-$(id -u)"
+    if [ -f "$__qclaude_goto" ]; then
+        local __dir
+        __dir=$(cat "$__qclaude_goto")
+        rm -f "$__qclaude_goto"
+        [ -n "$__dir" ] && cd "$__dir"
+    fi
+}
+```
+
+Without this, `g` still prints which directory it would switch to, but your shell stays put.
 
 ## Usage
 
@@ -140,6 +159,7 @@ Opens a ruled table of every saved session — **Directory**, **Session ID**, **
 | `/` | Search — see below |
 | `Enter` | Resume the highlighted session (or start a fresh one if its Status is `missing`) |
 | `o` | Start a brand-new session for the highlighted entry instead of resuming it |
+| `g` | Goto — leave `qclaude` with your shell sitting in the highlighted entry's directory, no claude session started (see below) |
 | `e` | Edit the highlighted session (same menu as `qclaude -e`) |
 | `d` | Delete the highlighted session, or clean up every missing one (asks which first — see below) |
 | `n` | Create a new project directory under `~/workspace` — see below |
@@ -147,12 +167,13 @@ Opens a ruled table of every saved session — **Directory**, **Session ID**, **
 
 Long lists scroll within a viewport that follows the selection, with "↑ N more above" / "↓ N more below" markers. The sort order (and this Status column) update live, so a session you just resumed, edited, or saved jumps straight back to the top next time the table redraws.
 
-- **Search**: `/` opens a one-line search box. Typing jumps the selection to the best-matching directory as you go (an exact substring beats a scattered/fuzzy match; `Backspace` edits and re-matches). `Enter` or `Esc` closes the box and leaves the selection where the search put it — it does **not** act on it. Press `Enter` again afterward to actually resume (or `o`/`e`/`d`/`n` as usual). While the box is open, every key you type — including `o`, `d`, `e`, `n`, and `q` — is just a search character, not a shortcut; only arrow/paging keys still navigate normally.
+- **Search**: `/` opens a one-line search box. Typing jumps the selection to the best-matching directory as you go (an exact substring beats a scattered/fuzzy match; `Backspace` edits and re-matches). `Enter` or `Esc` closes the box and leaves the selection where the search put it — it does **not** act on it. Press `Enter` again afterward to actually resume (or `o`/`g`/`e`/`d`/`n` as usual). While the box is open, every key you type — including `o`, `g`, `d`, `e`, `n`, and `q` — is just a search character, not a shortcut; only arrow/paging keys still navigate normally.
 - A session already active is shown as `active` in its Status column and can't be resumed or re-opened from here — exit the running session first. (`e`/`d` on an active session still work and will refuse with the same error `qclaude -e`/`qclaude -d` give directly.)
 - `d` first asks **Delete** (just the highlighted entry) or **Clean missing** (every `missing`-status entry at once, same as `qclaude -d --clean`) — `←`/`→` (or `↑`/`↓`) move between them, `Enter` confirms, `q` cancels back to the table with nothing changed. **Delete** is the default.
 - `e`, `n`, and whichever choice `d` leads to, drop back to a normal screen to run their confirmation/prompts (so answers go through your shell exactly as they would from `qclaude -e`/`qclaude -d`), then wait for `Enter` before returning you to a freshly-reloaded table — so a delete, clean, rename, or new project is reflected immediately.
 - `Enter` cd's into that session's directory and runs Claude Code in `--permission-mode bypassPermissions`: `claude --continue` if the Status is `active` or `ok`, or plain `claude` (a fresh session) if it's `missing` — the saved session file no longer exists, so there's nothing to continue. In that `missing` case, once that fresh session ends, **the new session it created is saved automatically** (no prompt — there was nothing worth keeping before). **When the claude session ends, you're brought straight back to the table** (refreshed), not dropped to your shell — `q` is the only way to actually leave. Your shell's own working directory is unchanged throughout, no matter how many sessions you hop between.
 - `o` cd's into the highlighted entry's directory and always starts a **brand-new** `claude --permission-mode bypassPermissions` session there — regardless of that entry's Status, and without resuming/continuing anything. When it ends, you're asked `Save this session? [y/N]` — answering yes points that directory's saved entry at the new session (replacing whatever was saved before); answering no (or just pressing `Enter`) leaves the database untouched, so the session you just had is left untracked.
+- `g` doesn't touch Claude Code at all — it just exits `qclaude` and leaves your shell in the highlighted entry's directory, for when you want to poke around a project without starting a session. **Requires the shell function from this README's Installation section** (a subprocess can't change its parent shell's directory on its own); without it, `g` still tells you which directory it would switch to, but your shell doesn't move. Refuses (and stays on the table) if that directory no longer exists.
 - `n` asks for a new project name, creates it as a subdirectory of `~/workspace`, and offers to open it. A plain name has its words joined into camelCase (`church files` → `~/workspace/churchFiles`); a name containing `/` is treated as an already-formed nested path, where every segment after a `/` must already be space-free (`churchFiles/accountingYouth` → `~/workspace/churchFiles/accountingYouth`, but `churchFiles/accounting youth` is rejected). Creation is refused outright if the target directory already exists. If you choose to open it (`Open this directory now? [Y/n]`, default yes), the resulting session is saved automatically — no prompt, since a just-created directory has nothing to overwrite.
 
 ---

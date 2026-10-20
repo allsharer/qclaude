@@ -8,10 +8,12 @@ Bare "qclaude" (no command) opens an interactive table of all saved
 sessions, most recently used first, where / searches, Enter resumes the
 highlighted one (returning to the table once that claude session ends), o
 starts a brand-new session for it instead (asking afterward whether to save
-it over the old one), e edits it, d deletes it (or cleans up every missing
-entry, your choice), n creates a new project directory under ~/workspace
-and optionally opens it, and q quits — the table's Status column already
-shows what "list" would, so most day-to-day use needs nothing but this.
+it over the old one), g leaves qclaude with your shell sitting in that
+entry's directory instead of starting any session (needs a shell function —
+see README.md), e edits it, d deletes it (or cleans up every missing entry,
+your choice), n creates a new project directory under ~/workspace and
+optionally opens it, and q quits — the table's Status column already shows
+what "list" would, so most day-to-day use needs nothing but this.
 
 Commands (flag or word form):
   -r, resume [--resume|--continue] [claude-args...]
@@ -35,6 +37,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import termios
 import time
 import tty
@@ -43,6 +46,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 DB_PATH = SCRIPT_DIR / "claude-sessions.db"
 CLAUDE_HOME = Path.home() / ".claude"
+
+# A child process can't change its parent shell's working directory on its
+# own, so "goto" hands the chosen path off through this file instead — a
+# shell function wrapping `qclaude` (see README) reads it after qclaude
+# exits and cd's there. Scoped by uid so it's never ambiguous on a shared
+# machine.
+GOTO_FILE = Path(tempfile.gettempdir()) / f"qclaude-goto-{os.getuid()}"
 
 NOT_A_DIR = "__NOT_A_DIR__"
 
@@ -859,11 +869,12 @@ def prompt_new_project():
 
 TABLE_EXTRA_ACTIONS = {
     b"o": "open", b"O": "open",
+    b"g": "goto", b"G": "goto",
     b"e": "edit", b"E": "edit",
     b"d": "delete", b"D": "delete",
     b"n": "new", b"N": "new",
 }
-TABLE_HINT = "↑/↓ move   / search   Enter resume   o open   e edit   d delete   n new   q quit"
+TABLE_HINT = "↑/↓ move   / search   Enter resume   o open   g goto   e edit   d delete   n new   q quit"
 
 
 def action_table(args):
@@ -916,6 +927,18 @@ def action_table(args):
                     if answer.strip().lower() in ("y", "yes"):
                         save_entry(load_db(), path, new_sid)
                         print(f"Saved session {new_sid} for {path}")
+        elif action == "goto":
+            if not Path(path).is_dir():
+                print(f"\033[1;31mError: {path} no longer exists.\033[0m")
+            else:
+                try:
+                    GOTO_FILE.write_text(path)
+                except OSError:
+                    pass
+                print(f"Leaving qclaude — your shell will switch to {path}")
+                if not os.environ.get("QCLAUDE_GOTO_WRAPPED"):
+                    print("(requires the qclaude shell function from README.md's Installation section)")
+                return 0
         elif action == "delete":
             choice = choose_inline(
                 "Delete just this entry, or clean up every missing entry?",
