@@ -98,6 +98,22 @@ def sid_exists(entries, sid):
     return any(s == sid for _, s in entries)
 
 
+def resync_to_latest(path, tracked_sid):
+    """`claude --continue` resumes whichever session is now the most
+    recently modified one for this directory — which isn't necessarily
+    the sid qclaude has tracked, if a session was ever started outside
+    qclaude (plain `claude`, a different tool, etc). Since that's exactly
+    what `find_latest_session` already computes, re-point the database at
+    it *before* continuing, so status/Last Used stay honest instead of
+    going stale against a session nothing is actually touching anymore.
+    Returns the new sid if it resynced, else None."""
+    latest = find_latest_session(path)
+    if latest and latest != tracked_sid:
+        save_entry(load_db(), path, latest)
+        return latest
+    return None
+
+
 def save_entry(db, path, sid):
     """Point path's row in db at sid (inserting one if path has none yet)
     and write it out — the common "save this session for this directory"
@@ -717,10 +733,12 @@ def cmd_resume(args):
             exec_claude(["--resume", "--permission-mode", "bypassPermissions", *extra])
     elif mode == "--continue":
         print(f"Continuing most recent session in {cwd}")
+        resync_to_latest(cwd, sid)
         exec_claude(["--continue", "--permission-mode", "bypassPermissions", *extra])
     else:
         if sid:
-            print(f"Resuming session {sid}")
+            new_sid = resync_to_latest(cwd, sid)
+            print(f"Resuming session {new_sid or sid}")
             exec_claude(["--continue", "--permission-mode", "bypassPermissions", *extra])
         else:
             print(f"No saved session for {cwd} — starting new session")
@@ -910,6 +928,7 @@ def action_table(args):
                         print(f"Saved session {new_sid} for {path}")
                         input("\nPress Enter to return to the list... ")
                 else:
+                    resync_to_latest(path, sid)
                     run_claude_and_wait(["--continue", "--permission-mode", "bypassPermissions"])
                 # claude already took over the screen; go straight back to the
                 # table once it exits, rather than pausing on nothing new.
